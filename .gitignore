@@ -1,0 +1,39 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+env/
+venv/
+ENV/
+
+# Data files (raw or processed)
+data/
+*.csv
+*.tsv
+*.parquet
+*.json
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Environment variables
+.env
+.env.*
+
+# Logs and temp files
+*.log
+*.tmp
+*.temp
+
+# macOS system files
+.DS_Store
+
+# Lock and build files (optional to ignore uv.lock if you don't want to track it)
+# If you want uv.lock in repo, remove next line
+# uv.lock
+
+# Backup files
+*~
