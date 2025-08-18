@@ -37,3 +37,10 @@ data/
 
 # Backup files
 *~
+
+# cursor rules
+.cursor/
+*.cursorrules
+
+# configs
+config/

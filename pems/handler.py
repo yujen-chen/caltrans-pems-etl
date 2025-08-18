@@ -22,7 +22,7 @@ import itertools
 import mechanize
 import numpy as np
 import pandas as pd
-from datetime import datetime  # 用於產生日期格式的檔案名稱
+from datetime import datetime
 from bs4 import BeautifulSoup
 from http.cookiejar import LWPCookieJar
 
@@ -332,7 +332,7 @@ class PeMSHandler(object):
 
     def _get_html_object(self):
         """Read main page HTML and return bs object."""
-        return BeautifulSoup(self.browser.response().read())
+        return BeautifulSoup(self.browser.response().read(), features="lxml")
 
     def _parse_html(self):
         """Convert BeautifulSoup html object to JSON."""
