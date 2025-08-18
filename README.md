@@ -16,8 +16,8 @@ uv pip install -e .
 from pems.handler import PeMSHandler
 
 handler = PeMSHandler(username="your_username", password="your_password")
-files = handler.get_files(start_year=2023, end_year=2023, districts=["4"], file_types=["station_5min"])
-handler.download_files(start_year=2023, end_year=2023, districts=["4"], file_types=["station_5min"], months=["01", "02"])
+files = handler.get_files(start_year=2023, end_year=2023, districts=["12"], file_types=["station_hour"])
+handler.download_files(start_year=2023, end_year=2023, districts=["12"], file_types=["station_hour"], months=["April", "May"])
 ```
 
 ## License

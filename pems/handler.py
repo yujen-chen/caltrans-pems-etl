@@ -3,6 +3,11 @@ handler.py
 ----------
 This module provides a class and methods for connecting with and pulling data from the CalTrans-PeMS site.
 By: Sebastian D. Goodfellow, Ph.D.
+
+Adopted by: Yu-Jen Chen
+
+Last Updated: 2025-08-17
+
 """
 
 # 3rd party imports
@@ -17,6 +22,7 @@ import itertools
 import mechanize
 import numpy as np
 import pandas as pd
+from datetime import datetime  # 用於產生日期格式的檔案名稱
 from bs4 import BeautifulSoup
 from http.cookiejar import LWPCookieJar
 
@@ -233,13 +239,45 @@ class PeMSHandler(object):
 
     @staticmethod
     def _logger_setup():
-        """Setup logger tool."""
+        """Setup logger tool to save logs to a date-formatted file."""
+
+        # Generate a log file name with today's date.
+        # logs-YYYY-MM-DD.txt (example:logs-2025-01-18.txt)
+        today = datetime.now().strftime("%Y-%m-%d")
+        log_filename = f"logs-{today}.txt"
+
+        # Ensure the logs directory exists
+        # If the directory does not exist, it will be created automatically
+        log_directory = "logs"
+        os.makedirs(log_directory, exist_ok=True)
+
+        # Create the full log file path
+        log_filepath = os.path.join(log_directory, log_filename)
+
+        # Set the log message format
+        # Includes timestamp, log level, and message content
         formatter = logging.Formatter("%(asctime)s [%(levelname)-8s] %(message)s")
-        handler = logging.StreamHandler(stream=sys.stdout)
+
+        # Create a file handler, replacing the original screen output handler
+        # mode='a' means the file is opened in append mode, so all logs for the same day will be accumulated in the same file
+        handler = logging.FileHandler(log_filepath, mode="a", encoding="utf-8")
+
+        # Apply the format setting to the handler
         handler.setFormatter(formatter)
+
+        # Set the log level to DEBUG, record all log levels
         handler.setLevel(logging.DEBUG)
+
+        # Create a log recorder
         log = logging.Logger("scraper")
+
+        # Add the file handler to the log recorder
         log.addHandler(handler)
+
+        # To let the user know the location of the log file, we write a message at the beginning of the file
+        # But only write when the file is created for the first time (to avoid duplicate writing each time)
+        if not os.path.exists(log_filepath) or os.path.getsize(log_filepath) == 0:
+            log.info(f"Log entry start - File location: {log_filepath}")
 
         return log
 
