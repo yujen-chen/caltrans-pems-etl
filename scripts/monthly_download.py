@@ -6,7 +6,7 @@ monthly_download.py
 This script is used to download PeMS data from CalTrans-PeMS.
 
 Usage:
-    python monthly_download.py
+    uv run python scripts/monthly_download.py
 
 
 """
