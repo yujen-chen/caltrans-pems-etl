@@ -6,7 +6,7 @@ By: Sebastian D. Goodfellow, Ph.D.
 
 Adopted by: Yu-Jen Chen
 
-Last Updated: 2025-08-17
+Last Updated: 2025-08-21
 
 """
 
@@ -22,12 +22,22 @@ import itertools
 import mechanize
 import numpy as np
 import pandas as pd
+from pathlib import Path
 from datetime import datetime
 from bs4 import BeautifulSoup
 from http.cookiejar import LWPCookieJar
 
+project_root = Path(__file__).parent.parent.parent.parent
+sys.path.insert(0, str(project_root))
+
+
 # Local imports
-from pems.settings import DATA_PATH, BASE_URL, DISTRICTS, CLEARING_HOUSE_URL
+from config.settings import (
+    DATA_DIR as DATA_PATH,
+    BASE_URL,
+    DISTRICTS,
+    CLEARING_HOUSE_URL,
+)
 
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.DEBUG)

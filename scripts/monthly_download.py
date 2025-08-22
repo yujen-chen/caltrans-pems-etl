@@ -14,20 +14,25 @@ Usage:
 import os
 import sys
 from datetime import datetime, timedelta
+from pathlib import Path
 from dotenv import load_dotenv
+
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+from config.settings import RAW_DATA_DIR
 
 # Use relative path for local development, absolute path for deployment
 if os.path.exists("config/credentials.env"):
     # local development environment
     load_dotenv("config/credentials.env")
-    data_path = "data"
+    data_path = str(RAW_DATA_DIR)
 else:
     # VPS deployment environment
     load_dotenv("/opt/pems-auto-downloader/config/credentials.env")
     data_path = "/opt/pems-auto-downloader/data"
-    sys.path.insert(0, "/opt/pems-auto-downloader")
 
-from pems.handler import PeMSHandler
+from src.pems.core.handler import PeMSHandler
 
 
 def main():
