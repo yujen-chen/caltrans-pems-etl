@@ -10,11 +10,20 @@ venv/
 ENV/
 
 # Data files (raw or processed)
-data/
+data/exports/*
+data/meta/*
+data/processed/*
+data/raw/*
 *.csv
 *.tsv
 *.parquet
 *.json
+
+# Keep the Data folder structure
+!data/exports/.gitkeep
+!data/meta/.gitkeep
+!data/processed/.gitkeep
+!data/raw/.gitkeep
 
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
@@ -43,4 +52,5 @@ data/
 *.cursorrules
 
 # configs
-config/
+config/credentials.env
+

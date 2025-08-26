@@ -72,10 +72,10 @@ def main():
             save_path=data_path,
         )
 
-        print(f"✅ {target_year} {target_month} data download completed")
+        print(f"{target_year} {target_month} data download completed")
 
     except Exception as e:
-        print(f"❌ Download failed: {str(e)}")
+        print(f"Download failed: {str(e)}")
         sys.exit(1)
 
 

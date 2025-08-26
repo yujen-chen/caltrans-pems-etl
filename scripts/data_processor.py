@@ -5,7 +5,7 @@ import glob
 import time
 import sys
 from pathlib import Path
-from config.settings import RAW_DATA_DIR, PROCESSED_DATA_DIR, META_DATA_DIR
+
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
