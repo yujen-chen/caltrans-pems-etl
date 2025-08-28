@@ -28,6 +28,9 @@ data/raw/*
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
 
+# tableau workbook
+*.twbx
+
 # Environment variables
 .env
 .env.*

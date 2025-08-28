@@ -5,7 +5,7 @@ import glob
 import time
 import sys
 from pathlib import Path
-
+from collections import defaultdict
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -163,11 +163,9 @@ def merge_with_meta(summarized_df, meta_df):
 
 def main():
 
-    all_processed_dfs = []
-
     # read in raw data
-    raw_files = glob.glob(str(RAW_DATA_DIR / "*.txt")) + glob.glob(
-        str(RAW_DATA_DIR / "*.gz")
+    raw_files = sorted(
+        glob.glob(str(RAW_DATA_DIR / "*.txt")) + glob.glob(str(RAW_DATA_DIR / "*.gz"))
     )
     meta_file = META_DATA_DIR / "d12_meta_20180918_20250713.csv"
 
@@ -183,27 +181,35 @@ def main():
 
     meta_df = pd.read_csv(meta_file)
 
+    files_by_year = defaultdict(list)
+
     for raw_file in raw_files:
-        file_path = Path(raw_file)
-        print(f"Processing: {file_path.name}")
-        raw_df = consume_raw(file_path)
+        # extract year from filename
+        year = raw_file.split("_")[4]
+        files_by_year[year].append(raw_file)
 
-        if raw_df.empty:
-            print(f"Skipping empty file: {file_path.name}")
-            continue
+    for year, year_files in files_by_year.items():
+        print(f"Processing year: {year}")
 
-        clean_df = clean_raw(raw_df, MIN_PCT_OBS, US_HOLIDAYS_2019_2025)
-        summarized_df = sum_for_hours_by_month(clean_df)
-        merged_df = merge_with_meta(summarized_df, meta_df)
-        all_processed_dfs.append(merged_df)
+        year_dfs = []
+        for raw_file in year_files:
+            file_path = Path(raw_file)
+            print(f"Processing: {file_path.name}")
+            raw_df = consume_raw(file_path)
 
-    print(f"Processed {len(all_processed_dfs)} files")
+            if raw_df.empty:
+                print(f"Skipping empty file: {file_path.name}")
+                continue
 
-    if all_processed_dfs:
-        all_processed_df = pd.concat(all_processed_dfs)
-        output_file = PROCESSED_DATA_DIR / "all_processed_df.parquet"
-        all_processed_df.to_parquet(output_file, index=False)
-        print(f"Results saved to: {output_file}")
+            clean_df = clean_raw(raw_df, MIN_PCT_OBS, US_HOLIDAYS_2019_2025)
+            summarized_df = sum_for_hours_by_month(clean_df)
+            merged_df = merge_with_meta(summarized_df, meta_df)
+            year_dfs.append(merged_df)
+        if year_dfs:
+            combined_df = pd.concat(year_dfs, ignore_index=True)
+            output_file = PROCESSED_DATA_DIR / f"{year}_station_hour_process.parquet"
+            combined_df.to_parquet(output_file, index=False)
+            print(f"Results saved to: {output_file}")
 
 
 if __name__ == "__main__":
