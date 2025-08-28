@@ -54,3 +54,5 @@ data/raw/*
 # configs
 config/credentials.env
 
+# Coding
+AGENTS.md

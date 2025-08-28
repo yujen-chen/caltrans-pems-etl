@@ -22,55 +22,6 @@ from config.settings import (
 
 # SETTINGS
 
-# num of cols = 42
-RAW_HOURLY_COLS = [
-    "time_stamp_string",
-    "station",
-    "district",
-    "route",
-    "direction",
-    "type",
-    "length",
-    "samples",
-    "pct_obs",
-    "flow",
-    "occupancy",
-    "speed",
-    "delay_35",
-    "delay_40",
-    "delay_45",
-    "delay_50",
-    "delay_55",
-    "delay_60",
-    "flow_1",
-    "occ_1",
-    "speed_1",
-    "flow_2",
-    "occ_2",
-    "speed_2",
-    "flow_3",
-    "occ_3",
-    "speed_3",
-    "flow_4",
-    "occ_4",
-    "speed_4",
-    "flow_5",
-    "occ_5",
-    "speed_5",
-    "flow_6",
-    "occ_6",
-    "speed_6",
-    "flow_7",
-    "occ_7",
-    "speed_7",
-    "flow_8",
-    "occ_8",
-    "speed_8",
-]
-
-# set min pct obs
-MIN_PCT_OBS = 80
-
 # us holidays from 2019 to 2025
 US_HOLIDAYS_2019_2025 = holidays.US(
     state="CA", years=[2019, 2020, 2021, 2022, 2023, 2024, 2025]
@@ -79,16 +30,19 @@ US_HOLIDAYS_2019_2025 = holidays.US(
 
 def consume_raw(raw_file_path):
     try:
+        # Normalize to Path for cross-platform handling
+        p = Path(raw_file_path)
+
         # check if file is compressed
-        if raw_file_path.endswith(".gz"):
+        if p.suffix == ".gz":
             import gzip
 
-            with gzip.open(raw_file_path, "rt") as f:
+            with gzip.open(p, "rt") as f:
                 df = pd.read_csv(f, sep=",", header=None, names=RAW_HOURLY_COLS)
         else:
-            df = pd.read_csv(raw_file_path, sep=",", header=None, names=RAW_HOURLY_COLS)
+            df = pd.read_csv(p, sep=",", header=None, names=RAW_HOURLY_COLS)
 
-        print(f"Successfully read {raw_file_path}, {len(df):,} rows")
+        print(f"Successfully read {p}, {len(df):,} rows")
         return df
 
     except Exception as e:
@@ -126,27 +80,8 @@ def clean_raw(raw_df, min_pct_obs, us_holidays):
     for i in range(7, 0, -1):
         df.loc[df[f"flow_{i}"].isna(), "lanes"] = i
 
-    # Define the final list of columns to keep and reorder
-    final_cols = [
-        "date",
-        "month",
-        "day_of_week",
-        "station",
-        "district",
-        "route",
-        "direction",
-        "type",
-        "hour",
-        "pct_obs",
-        "length",
-        "flow",
-        "speed",
-        "lanes",
-        "occupancy",
-    ]
-
     # ensure the final_cols are all in the df.columns
-    cols_to_select = [col for col in final_cols if col in df.columns]
+    cols_to_select = [col for col in FINAL_COLS if col in df.columns]
 
     df = df[cols_to_select]
 
@@ -266,8 +201,8 @@ def main():
 
     if all_processed_dfs:
         all_processed_df = pd.concat(all_processed_dfs)
-        output_file = PROCESSED_DATA_DIR / "all_processed_df.csv"
-        all_processed_df.to_csv(output_file, index=False)
+        output_file = PROCESSED_DATA_DIR / "all_processed_df.parquet"
+        all_processed_df.to_parquet(output_file, index=False)
         print(f"Results saved to: {output_file}")
 
 
