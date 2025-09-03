@@ -20,6 +20,18 @@ files = handler.get_files(start_year=2023, end_year=2023, districts=["12"], file
 handler.download_files(start_year=2023, end_year=2023, districts=["12"], file_types=["station_hour"], months=["April", "May"])
 ```
 
+## Dashboard
+
+Run a simple Streamlit dashboard that reads yearly Parquet files under `data/processed/`:
+
+```bash
+uv run streamlit run scripts/dashboard.py --server.address 0.0.0.0 --server.port 8501
+```
+
+Notes:
+- Make sure processed files exist (see `scripts/data_processor.py`).
+- Use a reverse proxy (e.g., Nginx/Caddy) for HTTPS in production.
+
 ## License
 
 MIT License
