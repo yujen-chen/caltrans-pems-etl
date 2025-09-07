@@ -19,7 +19,7 @@ dependencies = [
     "plotly>=6.0.0",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "pytest>=6.0",
     "black>=21.0",

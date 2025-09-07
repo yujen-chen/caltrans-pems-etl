@@ -175,12 +175,15 @@ def sidebar_filters(df: pd.DataFrame) -> pd.DataFrame:
     routes_sorted = sorted(routes_numeric, key=lambda x: float(x) if pd.notna(x) else 0)
     routes = [str(route) for route in routes_sorted]
 
-    # Route selection（最多 3 條）
+    # Route selection（最多 3 條；預設不選）
+    route_options = routes
     route_sel = st.sidebar.multiselect(
-        "Route (max 3)", routes, default=routes[:1], key="route_sel"
+        "Route (max 3)", route_options, default=[], key="route_sel"
     )
+    all_routes = False
     if len(route_sel) > 3:
         st.sidebar.warning("已選超過 3 條路線，僅套用前 3 條。")
+    # 最多取前三條
     route_sel_eff = route_sel[:3]
 
     # Switch between: Bars + Lines / Bars only / Lines only
@@ -203,10 +206,13 @@ def sidebar_filters(df: pd.DataFrame) -> pd.DataFrame:
         base_mask &= df["month"].isin(month_sel)
     base_mask &= df["hour"].between(hour_rng[0], hour_rng[1])
 
-    # If no route selected (S0)
+    # 只保留「每路線」Lane Type；不提供全域 Lane Type（避免全路線匯總誤解）
+    type_col_exists = "type" in df.columns
+
+    # 未選路線（S0）：提示並避免回傳全路線資料以免誤解
     if not route_sel_eff:
-        st.sidebar.info("請從 Route 中選擇最多 3 條以開始（S0）。")
-        return df[base_mask].copy()
+        st.sidebar.info("請從 Route 中選擇 1–3 條以開始（S0）。")
+        return df.iloc[0:0].copy()
 
     has_abs_pm = ("abs_pm" in df.columns) and (df["abs_pm"].notna().any())
 
@@ -227,39 +233,103 @@ def sidebar_filters(df: pd.DataFrame) -> pd.DataFrame:
                 )
                 continue
 
-            if "direction" in df.columns:
-                dir_options_r = sorted(
-                    df_r["direction"].dropna().astype(str).unique().tolist()
+            # Lane Type（每路線）：在 base_mask + route 條件下的可用型態
+            selected_type_r = None
+            if type_col_exists:
+                types_avail_r = (
+                    df_r["type"].dropna().astype(str).str.upper().unique().tolist()
                 )
-            else:
-                dir_options_r = []
-
-            if dir_options_r:
-                dir_choices_r = st.multiselect(
-                    "Direction（Multiple Selection Available）",
-                    options=dir_options_r,
-                    default=dir_options_r,
-                    key=f"dir_{r}",
-                )
-            else:
-                dir_choices_r = []
-                st.caption(
-                    "This route has no available directions or missing direction column."
-                )
-
-            # route+direction mask (if no direction column, only filter by route)
-            if dir_options_r and "direction" in df.columns:
-                if dir_choices_r:
-                    rd_mask = (df["route"].astype(str) == str(r)) & (
-                        df["direction"]
-                        .astype(str)
-                        .isin([str(d) for d in dir_choices_r])
-                    )
+                # 僅顯示 ML/HV 的交集，若資料有其他值則附加其餘
+                ordered = [t for t in ["ML", "HV"] if t in set(types_avail_r)]
+                extras = [t for t in types_avail_r if t not in set(["ML", "HV"])]
+                opts_r = ordered + extras
+                if not opts_r:
+                    st.caption("No lane type info for this route; 將不套用型態篩選。")
                 else:
-                    st.caption("No direction selected, this route will be ignored.")
+                    default_idx = 0
+                    if "ML" in opts_r:
+                        default_idx = opts_r.index("ML")
+                    selected_type_r = st.radio(
+                        "Lane Type",
+                        options=opts_r,
+                        index=default_idx,
+                        key=f"lane_type_{r}",
+                        help="選擇此路線的車道型態（ML=Main Lane, HV=HOV Lane）",
+                    )
+                    if "HV" not in set(types_avail_r):
+                        st.caption("HV（HOV）在此路線目前條件下無資料")
+
+            # 初始 route 遮罩（含型態）
+            if selected_type_r and type_col_exists:
+                rd_mask = (df["route"].astype(str) == str(r)) & (
+                    df["type"].astype(str).str.upper() == selected_type_r
+                )
+                df_r = df[rd_mask & base_mask]
+                if df_r.empty:
+                    st.caption("No data for selected lane type under this route.")
                     continue
             else:
                 rd_mask = df["route"].astype(str) == str(r)
+
+            # Direction 選擇：單選 North/South 或 East/West，並提供 Two‑way（sum）
+            # 先偵測可用方向，使用第一個字母（N/S/E/W）做正規化
+            dir_options_r = []
+            if "direction" in df.columns:
+                dir_options_r = (
+                    df_r["direction"].dropna().astype(str).str.upper().str[0].unique().tolist()
+                )
+            dir_set = set(dir_options_r)
+
+            # 判斷此路線的方向型態與 radio 選項
+            if ("N" in dir_set) or ("S" in dir_set):
+                dir_radio_opts = ["North", "South", "Two-way (sum)"]
+                default_idx = 0  # 預設 North
+                dir_mode = st.radio(
+                    "Direction",
+                    options=dir_radio_opts,
+                    index=default_idx,
+                    key=f"dir_mode_{r}",
+                    help="選擇方向；Two-way（sum）為雙向平均流量的加總（單向缺資料則退化為單向）",
+                )
+                # 依選擇建立遮罩：Two‑way 不限制方向；單向以首字母比對（N 或 S）
+                if dir_mode == "North":
+                    rd_mask = df["route"].astype(str) == str(r)
+                    rd_mask &= df["direction"].astype(str).str.upper().str[0] == "N"
+                elif dir_mode == "South":
+                    rd_mask = df["route"].astype(str) == str(r)
+                    rd_mask &= df["direction"].astype(str).str.upper().str[0] == "S"
+                else:
+                    rd_mask = df["route"].astype(str) == str(r)
+                if selected_type_r and type_col_exists:
+                    rd_mask &= df["type"].astype(str).str.upper() == selected_type_r
+            elif ("E" in dir_set) or ("W" in dir_set):
+                dir_radio_opts = ["East", "West", "Two-way (sum)"]
+                default_idx = 0  # 預設 East
+                dir_mode = st.radio(
+                    "Direction",
+                    options=dir_radio_opts,
+                    index=default_idx,
+                    key=f"dir_mode_{r}",
+                    help="選擇方向；Two-way（sum）為雙向平均流量的加總（單向缺資料則退化為單向）",
+                )
+                if dir_mode == "East":
+                    rd_mask = df["route"].astype(str) == str(r)
+                    rd_mask &= df["direction"].astype(str).str.upper().str[0] == "E"
+                elif dir_mode == "West":
+                    rd_mask = df["route"].astype(str) == str(r)
+                    rd_mask &= df["direction"].astype(str).str.upper().str[0] == "W"
+                else:
+                    rd_mask = df["route"].astype(str) == str(r)
+                if selected_type_r and type_col_exists:
+                    rd_mask &= df["type"].astype(str).str.upper() == selected_type_r
+            else:
+                # 無 direction 欄位或皆為缺失：僅以 route/type 過濾
+                st.caption(
+                    "This route has no standard N/S/E/W direction values or missing direction column."
+                )
+                rd_mask = df["route"].astype(str) == str(r)
+                if selected_type_r and type_col_exists:
+                    rd_mask &= df["type"].astype(str).str.upper() == selected_type_r
 
             df_rd = df[rd_mask & base_mask]
             if df_rd.empty:
@@ -347,6 +417,170 @@ def render_kpis(df: pd.DataFrame) -> None:
         st.metric("Avg Flow", f"{avg_flow:0.1f}" if pd.notna(avg_flow) else "-")
 
 
+def _render_flow_by_month_for_route(df: pd.DataFrame, r: str, month_order: list, year_color_map: dict) -> None:
+    df_r = df[df["route"].astype(str) == str(r)]
+    if df_r.empty:
+        st.caption(f"Route {r}: no data under current filters.")
+        return
+
+    df_r = df_r.copy()
+    # Prepare per-lane flow for line (right axis)
+    if "lanes" in df_r.columns:
+        flo = df_r["avg_flow"].astype(float)
+        lns = df_r["lanes"].astype(float)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            df_r["flow_per_lane"] = np.where(lns > 0, flo / lns, np.nan)
+    else:
+        df_r["flow_per_lane"] = np.nan
+
+    cat_months = pd.Categorical(df_r["month"], categories=month_order, ordered=True)
+
+    # 方向模式（單向或 Two‑way（sum））：從 session 取得
+    dir_mode = st.session_state.get(f"dir_mode_{r}")
+
+    # Bars：
+    # - 單向：在目前資料（已由 sidebar 過濾為單向）上取平均
+    # - Two‑way（sum）：先算每方向的月別平均，再將兩個相反方向相加（單向缺資料則退化為單向）
+    if isinstance(dir_mode, str) and "Two-way" in dir_mode:
+        df_tmp = df_r.copy()
+        df_tmp["dir_letter"] = df_tmp["direction"].astype(str).str.upper().str[0]
+        # 判斷使用 N/S 或 E/W 組合
+        letters = set(df_tmp["dir_letter"].dropna().unique().tolist())
+        if ("N" in letters) or ("S" in letters):
+            pair = ("N", "S")
+        else:
+            pair = ("E", "W")
+
+        by_dir = (
+            df_tmp.assign(month_cat=cat_months)
+            .dropna(subset=["month_cat", "avg_flow", "year"])
+            .groupby(["month_cat", "year", "dir_letter"])["avg_flow"]
+            .mean()
+            .reset_index()
+        )
+        piv = by_dir.pivot(index=["month_cat", "year"], columns="dir_letter", values="avg_flow").reset_index()
+        for d in pair:
+            if d not in piv.columns:
+                piv[d] = np.nan
+        piv["bar_value"] = piv[list(pair)].sum(axis=1, skipna=True)
+        bars_by_month_year = piv.rename(columns={"month_cat": "month"})[["month", "year", "bar_value"]]
+    else:
+        bars_by_month_year = (
+            df_r.assign(month_cat=cat_months)
+            .dropna(subset=["month_cat", "avg_flow", "year"])
+            .groupby(["month_cat", "year"])["avg_flow"]
+            .mean()
+            .reset_index()
+            .rename(columns={"month_cat": "month", "avg_flow": "bar_value"})
+        )
+    bar_y_title = "Average Flow (veh/h)"
+    if bars_by_month_year.empty:
+        st.caption(f"Route {r}: insufficient data to plot.")
+        return
+
+    # Line (right axis): per-year monthly medians
+    use_per_lane_line = df_r["flow_per_lane"].notna().any()
+    y2_title = (
+        "Median Flow per Lane (veh/h/ln)" if use_per_lane_line else "Median Flow (veh/h)"
+    )
+
+    years = sorted(bars_by_month_year["year"].unique())
+    fig = go.Figure()
+    bars_enabled = st.session_state.get("display_mode", "Bars + Lines") in (
+        "Bars + Lines",
+        "Bars only",
+    )
+    lines_enabled = st.session_state.get("display_mode", "Bars + Lines") in (
+        "Bars + Lines",
+        "Lines only",
+    )
+    if bars_enabled:
+        for year in years:
+            year_data = bars_by_month_year[bars_by_month_year["year"] == year]
+            try:
+                y_int = int(year)
+            except Exception:
+                y_int = None
+            color = year_color_map.get(y_int) if y_int is not None else None
+            fig.add_trace(
+                go.Bar(
+                    x=year_data["month"],
+                    y=year_data["bar_value"],
+                    name=f"{year} Avg. Flow",
+                    marker_color=color,
+                    legendgroup=str(year),
+                )
+            )
+
+    # Add line traces on secondary (right) axis, one per year
+    if lines_enabled:
+        for year in years:
+            df_y = df_r[df_r["year"] == year].copy()
+            try:
+                y_int = int(year)
+            except Exception:
+                y_int = None
+            color = year_color_map.get(y_int) if y_int is not None else None
+            df_y["month_cat"] = pd.Categorical(
+                df_y["month"], categories=month_order, ordered=True
+            )
+            if use_per_lane_line:
+                line_df = (
+                    df_y.dropna(subset=["month_cat", "flow_per_lane"])  # per-lane available
+                    .groupby(["month_cat"])["flow_per_lane"]
+                    .median()
+                    .reset_index()
+                    .rename(columns={"month_cat": "month", "flow_per_lane": "line_value"})
+                )
+                line_name = f"Median per-lane ({year})"
+            else:
+                line_df = (
+                    df_y.dropna(subset=["month_cat", "avg_flow"])  # fallback
+                    .groupby(["month_cat"])["avg_flow"]
+                    .median()
+                    .reset_index()
+                    .rename(columns={"month_cat": "month", "avg_flow": "line_value"})
+                )
+                line_name = f"Median flow ({year})"
+
+            if not line_df.empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=line_df["month"],
+                        y=line_df["line_value"],
+                        name=line_name,
+                        mode="lines+markers",
+                        yaxis="y2",
+                        line=dict(color=color),
+                        marker=dict(color=color),
+                        legendgroup=str(year),
+                    )
+                )
+
+    # Dynamic title description: (Bars only / Lines only / Bars + Lines)
+    mode_label = st.session_state.get("display_mode", "Bars + Lines")
+    line_label = (
+        "Median per-lane by year" if use_per_lane_line else "Median flow by year"
+    )
+    if mode_label == "Bars only":
+        title_txt = f"Route {r} – Monthly Flow (Bars=Avg)"
+    elif mode_label == "Lines only":
+        title_txt = f"Route {r} – Monthly Flow (Line={line_label})"
+    else:
+        title_txt = f"Route {r} – Monthly Flow (Bars=Avg, Line={line_label})"
+
+    fig.update_layout(
+        barmode="group",
+        xaxis_title="Month",
+        yaxis=dict(title=bar_y_title),
+        yaxis2=dict(title=y2_title, overlaying="y", side="right", showgrid=False),
+        title=title_txt,
+        legend_title="Legend",
+        legend=dict(orientation="h", yanchor="bottom", y=-0.35, xanchor="center", x=0.5),
+    )
+
+    st.plotly_chart(fig)
+
 def render_charts(df: pd.DataFrame) -> None:
     if df.empty:
         st.info("No data available for current filters.")
@@ -389,161 +623,12 @@ def render_charts(df: pd.DataFrame) -> None:
         years_unique = sorted(set(years_vals))
         for i, y in enumerate(years_unique):
             year_color_map[int(y)] = YEAR_COLOR_PALETTE[i % len(YEAR_COLOR_PALETTE)]
-    route_list = (
-        selected_routes[:3]
-        if selected_routes
-        else sorted(df["route"].astype(str).dropna().unique().tolist())[:1]
-    )
-
+    route_list = selected_routes[:3] if selected_routes else []
     if not route_list:
-        st.info("No route selected for monthly flow chart.")
+        st.info("請先於左側選擇 1–3 條路線以顯示月別流量圖。")
+        return
     for r in route_list:
-        df_r = df[df["route"].astype(str) == str(r)]
-        if df_r.empty:
-            st.caption(f"Route {r}: no data under current filters.")
-            continue
-
-        df_r = df_r.copy()
-        # Prepare per-lane flow for line (right axis)
-        if "lanes" in df_r.columns:
-            flo = df_r["avg_flow"].astype(float)
-            lns = df_r["lanes"].astype(float)
-            with np.errstate(divide="ignore", invalid="ignore"):
-                df_r["flow_per_lane"] = np.where(lns > 0, flo / lns, np.nan)
-        else:
-            df_r["flow_per_lane"] = np.nan
-
-        cat_months = pd.Categorical(df_r["month"], categories=month_order, ordered=True)
-
-        # Bars: average flow (veh/h) per month-year across selected stations
-        bars_by_month_year = (
-            df_r.assign(month_cat=cat_months)
-            .dropna(subset=["month_cat", "avg_flow", "year"])
-            .groupby(["month_cat", "year"])["avg_flow"]
-            .mean()
-            .reset_index()
-            .rename(columns={"month_cat": "month", "avg_flow": "bar_value"})
-        )
-        bar_y_title = "Average Flow (veh/h)"
-        if bars_by_month_year.empty:
-            st.caption(f"Route {r}: insufficient data to plot.")
-            continue
-
-        # Line (right axis): per-year monthly medians
-        use_per_lane_line = df_r["flow_per_lane"].notna().any()
-        y2_title = (
-            "Median Flow per Lane (veh/h/ln)"
-            if use_per_lane_line
-            else "Median Flow (veh/h)"
-        )
-
-        years = sorted(bars_by_month_year["year"].unique())
-        fig = go.Figure()
-        bars_enabled = st.session_state.get("display_mode", "Bars + Lines") in (
-            "Bars + Lines",
-            "Bars only",
-        )
-        lines_enabled = st.session_state.get("display_mode", "Bars + Lines") in (
-            "Bars + Lines",
-            "Lines only",
-        )
-        if bars_enabled:
-            for year in years:
-                year_data = bars_by_month_year[bars_by_month_year["year"] == year]
-                try:
-                    y_int = int(year)
-                except Exception:
-                    y_int = None
-                color = year_color_map.get(y_int) if y_int is not None else None
-                fig.add_trace(
-                    go.Bar(
-                        x=year_data["month"],
-                        y=year_data["bar_value"],
-                        name=f"{year} Avg. Flow",
-                        marker_color=color,
-                        legendgroup=str(year),
-                    )
-                )
-
-        # Add line traces on secondary (right) axis, one per year
-        if lines_enabled:
-            for year in years:
-                df_y = df_r[df_r["year"] == year].copy()
-                try:
-                    y_int = int(year)
-                except Exception:
-                    y_int = None
-                color = year_color_map.get(y_int) if y_int is not None else None
-                df_y["month_cat"] = pd.Categorical(
-                    df_y["month"], categories=month_order, ordered=True
-                )
-                if use_per_lane_line:
-                    line_df = (
-                        df_y.dropna(
-                            subset=["month_cat", "flow_per_lane"]
-                        )  # per-lane available
-                        .groupby(["month_cat"])["flow_per_lane"]
-                        .median()
-                        .reset_index()
-                        .rename(
-                            columns={
-                                "month_cat": "month",
-                                "flow_per_lane": "line_value",
-                            }
-                        )
-                    )
-                    line_name = f"Median per-lane ({year})"
-                else:
-                    line_df = (
-                        df_y.dropna(subset=["month_cat", "avg_flow"])  # fallback
-                        .groupby(["month_cat"])["avg_flow"]
-                        .median()
-                        .reset_index()
-                        .rename(
-                            columns={"month_cat": "month", "avg_flow": "line_value"}
-                        )
-                    )
-                    line_name = f"Median flow ({year})"
-
-                if not line_df.empty:
-                    fig.add_trace(
-                        go.Scatter(
-                            x=line_df["month"],
-                            y=line_df["line_value"],
-                            name=line_name,
-                            mode="lines+markers",
-                            yaxis="y2",
-                            line=dict(color=color),
-                            marker=dict(color=color),
-                            legendgroup=str(year),
-                        )
-                    )
-
-        # Dynamic title description: (Bars only / Lines only / Bars + Lines)
-        mode_label = st.session_state.get("display_mode", "Bars + Lines")
-        line_label = (
-            "Median per-lane by year" if use_per_lane_line else "Median flow by year"
-        )
-        if mode_label == "Bars only":
-            title_txt = f"Route {r} – Monthly Flow (Bars=Avg)"
-        elif mode_label == "Lines only":
-            title_txt = f"Route {r} – Monthly Flow (Line={line_label})"
-        else:
-            title_txt = f"Route {r} – Monthly Flow (Bars=Avg, Line={line_label})"
-
-        fig.update_layout(
-            barmode="group",
-            xaxis_title="Month",
-            yaxis=dict(title=bar_y_title),
-            yaxis2=dict(title=y2_title, overlaying="y", side="right", showgrid=False),
-            title=title_txt,
-            legend_title="Legend",
-            legend=dict(
-                orientation="h", yanchor="bottom", y=-0.35, xanchor="center", x=0.5
-            ),
-        )
-
-        st.plotly_chart(fig)
+        _render_flow_by_month_for_route(df, r, month_order, year_color_map)
     # st.bar_chart(flow_pivot)
 
     # plot 2: Speed by Hour
