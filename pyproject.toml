@@ -25,6 +25,7 @@ dev = [
     "black>=21.0",
     "flake8>=3.9",
     "ipykernel>=6.0.0",
+    "nbformat>=4.2.0",
 ]
 
 [project.scripts]
