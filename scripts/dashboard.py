@@ -13,7 +13,7 @@ Run:
 """
 TODO:
 - [ ] Update the bar chart title
-- [ ] Update the map style to carto-positron
+- [ ] Update S0 KPIs with ML only
 
 """
 
@@ -133,11 +133,13 @@ def sidebar_filters(df: pd.DataFrame) -> pd.DataFrame:
         else []
     )
     year_sel = st.sidebar.multiselect("Year", years, default=years)
-    # 限制最多 5 年；超過時僅採前 5 並提示
+    # Limit to 5 years; if more than 5, only the first 5 will be applied and a warning will be shown
     if len(year_sel) > 5:
-        st.sidebar.warning("已選超過 5 個年份，僅套用前 5 年。")
+        st.sidebar.warning(
+            "Selected more than 5 years, only the first 5 years will be applied."
+        )
         year_sel = year_sel[:5]
-    # 保存年份選擇到 session，供地圖（未選路線時）與動畫模式控制使用
+    # Save year selection to session, for map (when no route is selected) and animation mode control
     st.session_state["year_sel"] = year_sel
 
     # Month filter
@@ -161,7 +163,7 @@ def sidebar_filters(df: pd.DataFrame) -> pd.DataFrame:
         else []
     )
     month_sel = st.sidebar.multiselect("Month", months_avail, default=months_avail)
-    # 保存月份選擇至 session（地圖 S0 計算 Year×Month 會用到）
+    # save month selection to session
     st.session_state["month_sel"] = month_sel
 
     # Hour filter
@@ -194,6 +196,10 @@ def sidebar_filters(df: pd.DataFrame) -> pd.DataFrame:
         st.sidebar.warning("已選超過 3 條路線，僅套用前 3 條。")
     # 最多取前三條
     route_sel_eff = route_sel[:3]
+    # 將選擇同步到 session，供 KPI 與其他元件參考（含相容鍵名）
+    st.session_state["selected_routes"] = route_sel_eff
+    st.session_state["routes_selected"] = route_sel_eff
+    st.session_state["routes_selected_count"] = len(route_sel_eff)
 
     # Switch between: Bars + Lines / Bars only / Lines only
     st.sidebar.markdown("---")
@@ -418,18 +424,91 @@ def sidebar_filters(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def render_kpis(df: pd.DataFrame) -> None:
+    # 以 route_sel（或向後相容鍵）檢測是否未選路線（S0）
+    selected_routes = st.session_state.get(
+        "route_sel", st.session_state.get("selected_routes", [])
+    )
+    if selected_routes is None:
+        selected_routes = []
+    if not isinstance(selected_routes, (list, tuple, set)):
+        selected_routes = [selected_routes]
+    routes_selected_count = len(selected_routes)
+    st.session_state["routes_selected_count"] = routes_selected_count
+
+    s0_no_routes = routes_selected_count == 0
+
+    # KPI 的資料來源：預設使用傳入的 df；
+    # 若未選路線且 session_state 提供 df_all，則改以 df_all 展示「全資料在目前 Year/Month 下」的 KPI。
+    df_for_metrics = df
+    if s0_no_routes and isinstance(st.session_state.get("df_all"), pd.DataFrame):
+        base_df = st.session_state["df_all"]
+        years_sel = st.session_state.get("year_sel")
+        months_sel = st.session_state.get("month_sel")
+        m = pd.Series(True, index=base_df.index)
+        if years_sel:
+            m &= base_df["year"].isin(years_sel)
+        if months_sel:
+            m &= base_df["month"].isin(months_sel)
+        df_for_metrics = base_df[m].copy()
+        # S0：僅納入 ML（Main Lane）以計算 Avg Speed/Flow；若無 type 欄或無 ML，則退回全部型態
+        if "type" in df_for_metrics.columns:
+            ml_mask = df_for_metrics["type"].astype(str).str.upper() == "ML"
+            if ml_mask.any():
+                df_for_metrics = df_for_metrics[ml_mask].copy()
+    df_ym = df_for_metrics
+
+    # 計算 KPI 數值（站點數、平均速率、平均流量、路線數）
+    if isinstance(df_ym, pd.DataFrame) and not df_ym.empty:
+        stations = df_ym["station"].nunique() if "station" in df_ym.columns else 0
+        routes_present = df_ym["route"].nunique() if "route" in df_ym.columns else 0
+
+        speed_col = (
+            "avg_speed"
+            if "avg_speed" in df_ym.columns
+            else ("speed" if "speed" in df_ym.columns else None)
+        )
+        avg_speed_val = (
+            pd.to_numeric(df_ym[speed_col], errors="coerce").mean()
+            if speed_col
+            else float("nan")
+        )
+
+        flow_col = (
+            "avg_flow"
+            if "avg_flow" in df_ym.columns
+            else ("flow" if "flow" in df_ym.columns else None)
+        )
+        avg_flow_val = (
+            pd.to_numeric(df_ym[flow_col], errors="coerce").mean()
+            if flow_col
+            else float("nan")
+        )
+    else:
+        stations = 0
+        routes_present = 0
+        avg_speed_val = float("nan")
+        avg_flow_val = float("nan")
+
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.metric("Records", f"{len(df):,}")
+        if s0_no_routes:
+            st.metric("Routes Present", f"{routes_present:,}")
+        else:
+            st.metric("Routes Selected", f"{routes_selected_count:,}")
     with c2:
-        stations = df["station"].nunique() if "station" in df.columns else 0
         st.metric("Stations", f"{stations:,}")
     with c3:
-        avg_speed = df["avg_speed"].astype(float).mean()
-        st.metric("Avg Speed", f"{avg_speed:0.1f} mph" if pd.notna(avg_speed) else "-")
+        st.metric(
+            "Avg Speed", f"{avg_speed_val:0.1f} mph" if pd.notna(avg_speed_val) else "-"
+        )
     with c4:
-        avg_flow = df["avg_flow"].astype(float).mean()
-        st.metric("Avg Flow", f"{avg_flow:0.1f}" if pd.notna(avg_flow) else "-")
+        st.metric("Avg Flow", f"{avg_flow_val:0.1f}" if pd.notna(avg_flow_val) else "-")
+
+    # S0 模式說明：避免誤解為「選取了所有路線」，明確標示為全域概覽
+    if s0_no_routes:
+        st.caption(
+            "Global mode – KPIs across all stations (ML only) under selected Year/Month; simple averages. 選擇 1–3 條路線以切換為 Route 模式。"
+        )
 
 
 def _render_flow_by_month_for_route(
@@ -628,13 +707,6 @@ def _render_stations_map(base_df: pd.DataFrame, filtered_df: pd.DataFrame) -> No
     else:
         base_df_year = base_df.copy()
 
-    # 自定連續色階（低→高：綠→黃→紅）
-    flow_colorscale = [
-        (0.0, "#2ca02c"),  # green
-        (0.5, "#f1c40f"),  # yellow
-        (1.0, "#d62728"),  # red
-    ]
-
     has_routes = not filtered_df.empty
 
     if not has_routes:
@@ -698,135 +770,21 @@ def _render_stations_map(base_df: pd.DataFrame, filtered_df: pd.DataFrame) -> No
             height=720,
             center=dict(lat=lat_mean, lon=lon_mean),
             zoom=10,
+            map_style="carto-positron",
         )
         fig_map.update_traces(marker=dict(size=15, opacity=0.9))
         fig_map.update_layout(
-            margin=dict(l=0, r=0, t=0, b=0),
+            margin=dict(l=0, r=0, t=0, b=40),
+            modebar=dict(remove=["select2d", "lasso2d", "autoScale2d", "resetScale2d"]),
         )
         st.subheader("Stations Map")
-        st.plotly_chart(fig_map, use_container_width=True)
+        st.plotly_chart(
+            fig_map,
+            use_container_width=True,
+        )
         st.divider()
         return
 
-        # 簡化：移除地圖上的 Year/Month 選擇器，直接依側欄條件聚合繪製
-
-        months_order = [
-            "January",
-            "February",
-            "March",
-            "April",
-            "May",
-            "June",
-            "July",
-            "August",
-            "September",
-            "October",
-            "November",
-            "December",
-        ]
-
-        if anim_mode == "Year":
-            # 將選取月份聚合為「站點×年」，並以年份滑桿選擇單一年度顯示
-            grp_year = (
-                grp_ym.groupby(["station", "year"], dropna=True)
-                .agg(
-                    latitude=("latitude", "median"),
-                    longitude=("longitude", "median"),
-                    avg_flow_year=("avg_flow_ym", "mean"),
-                )
-                .reset_index()
-            )
-            years_in_data = sorted(
-                [int(y) for y in grp_year["year"].dropna().unique().tolist()]
-            )
-            if not years_in_data:
-                return
-            sel_year = st.select_slider(
-                "Year frame",
-                options=years_in_data,
-                value=years_in_data[0],
-                key="map_year_frame",
-            )
-            yr_df = grp_year.loc[grp_year["year"].astype(int) == int(sel_year)].copy()
-            _vals = pd.to_numeric(yr_df["avg_flow_year"], errors="coerce").dropna()
-            if _vals.empty:
-                fmin, fmax = 0.0, 1.0
-            else:
-                fmin = float(_vals.min())
-                fmax = float(_vals.max())
-                if fmin == fmax:
-                    delta = 1.0 if fmax == 0 else abs(fmax) * 0.05
-                    fmin, fmax = fmin - delta, fmax + delta
-            lat_mean = float(pd.to_numeric(yr_df["latitude"]).mean())
-            lon_mean = float(pd.to_numeric(yr_df["longitude"]).mean())
-            fig_map = px.scatter_map(
-                yr_df,
-                lat="latitude",
-                lon="longitude",
-                color="avg_flow_year",
-                # color_continuous_scale=flow_colorscale,
-                color_continuous_scale=px.colors.diverging.Geyser,
-                range_color=(fmin, fmax),
-                hover_name="station",
-                hover_data={"year": True, "avg_flow_year": ":.1f"},
-                height=720,
-                center=dict(lat=lat_mean, lon=lon_mean),
-                zoom=10,
-                style="carto-positron",
-            )
-            fig_map.update_traces(marker=dict(size=15, opacity=0.9))
-            fig_map.update_layout(
-                margin=dict(l=0, r=0, t=0, b=0),
-            )
-
-        elif anim_mode == "Month":
-            grp_mon = (
-                grp_ym.groupby(["station", "month"], dropna=True)
-                .agg(
-                    latitude=("latitude", "median"),
-                    longitude=("longitude", "median"),
-                    avg_flow_month=("avg_flow_ym", "mean"),
-                )
-                .reset_index()
-            )
-            months_in_data = [
-                m for m in months_order if m in set(grp_mon["month"].dropna())
-            ]
-            if not months_in_data:
-                return
-            sel_month = st.select_slider(
-                "Month frame",
-                options=months_in_data,
-                value=months_in_data[0],
-                key="map_month_frame",
-            )
-            mon_df = grp_mon.loc[grp_mon["month"] == sel_month].copy()
-            _vals = pd.to_numeric(mon_df["avg_flow_month"], errors="coerce").dropna()
-            if _vals.empty:
-                fmin, fmax = 0.0, 1.0
-            else:
-                fmin = float(_vals.min())
-                fmax = float(_vals.max())
-            lat_mean = float(pd.to_numeric(mon_df["latitude"]).mean())
-            lon_mean = float(pd.to_numeric(mon_df["longitude"]).mean())
-            fig_map = px.scatter_map(
-                mon_df,
-                lat="latitude",
-                lon="longitude",
-                color="avg_flow_month",
-                color_continuous_scale=px.colors.diverging.Geyser,
-                range_color=(fmin, fmax),
-                hover_name="station",
-                hover_data={"month": True, "avg_flow_month": ":.1f"},
-                height=720,
-                center=dict(lat=lat_mean, lon=lon_mean),
-                zoom=10,
-            )
-            fig_map.update_traces(marker=dict(size=15, opacity=0.9))
-            fig_map.update_layout(
-                margin=dict(l=0, r=0, t=0, b=0),
-            )
-            # Month 視圖無動畫，避免全域色階影響，色階已按該月資料計算
     else:
         # 已選路線：依目前篩選條件聚合為每站「平均流量」
         df_map = filtered_df.dropna(subset=["latitude", "longitude"]).copy()
@@ -864,13 +822,18 @@ def _render_stations_map(base_df: pd.DataFrame, filtered_df: pd.DataFrame) -> No
             height=720,
             center=dict(lat=lat_mean, lon=lon_mean),
             zoom=10,
+            map_style="carto-positron",
         )
         fig_map.update_traces(marker=dict(size=15, opacity=0.9))
         fig_map.update_layout(
-            margin=dict(l=0, r=0, t=0, b=0),
+            margin=dict(l=0, r=0, t=0, b=40),
+            modebar=dict(remove=["select2d", "lasso2d", "autoScale2d", "resetScale2d"]),
         )
         st.subheader("Stations Map")
-        st.plotly_chart(fig_map, use_container_width=True)
+        st.plotly_chart(
+            fig_map,
+            use_container_width=True,
+        )
         return
 
 
@@ -911,7 +874,7 @@ def render_charts(base_df: pd.DataFrame, df: pd.DataFrame) -> None:
             year_color_map[int(y)] = YEAR_COLOR_PALETTE[i % len(YEAR_COLOR_PALETTE)]
     route_list = selected_routes[:3] if selected_routes else []
     if not route_list:
-        st.info("請先於左側選擇 1–3 條路線以顯示月別流量圖。")
+        st.info("Please select 1–3 routes on the left to display monthly flow charts.")
         return
     for r in route_list:
         _render_flow_by_month_for_route(df, r, month_order, year_color_map)
@@ -947,10 +910,13 @@ def render_download(df: pd.DataFrame) -> None:
 
 def main():
     st.set_page_config(page_title="CalTrans PeMS Dashboard", layout="wide")
-    st.title("CalTrans PeMS – Station Hour Dashboard")
-    st.caption("Data source: CalTrans PeMS (District 12 by default)")
+    st.title("CalTrans PeMS – D12 Station Hour Dashboard")
+    st.caption("Data source: CalTrans PeMS (District 12)")
+    st.caption("Data period: 2019 to 2025")
 
     df = load_all_processed()
+    # 將全量資料存入 session，便於 S0（未選路線）時 KPI 使用 Year/Month 口徑顯示
+    st.session_state["df_all"] = df
     if df.empty:
         st.warning(
             "No processed data found. Place yearly Parquet files under data/processed/."
