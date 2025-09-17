@@ -132,7 +132,8 @@ def sidebar_filters(df: pd.DataFrame) -> pd.DataFrame:
         if not df.empty and "year" in df.columns
         else []
     )
-    year_sel = st.sidebar.multiselect("Year", years, default=years)
+    year_default = years[:5] if len(years) > 5 else years
+    year_sel = st.sidebar.multiselect("Year", years, default=year_default)
     # Limit to 5 years; if more than 5, only the first 5 will be applied and a warning will be shown
     if len(year_sel) > 5:
         st.sidebar.warning(
@@ -911,8 +912,7 @@ def render_download(df: pd.DataFrame) -> None:
 def main():
     st.set_page_config(page_title="CalTrans PeMS Dashboard", layout="wide")
     st.title("CalTrans PeMS – D12 Station Hour Dashboard")
-    st.caption("Data source: CalTrans PeMS (District 12)")
-    st.caption("Data period: 2019 to 2025")
+    st.caption("Data source: CalTrans PeMS (District 12); Data period: 2019 to 2025")
 
     df = load_all_processed()
     # 將全量資料存入 session，便於 S0（未選路線）時 KPI 使用 Year/Month 口徑顯示
