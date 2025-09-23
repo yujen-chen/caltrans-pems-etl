@@ -187,17 +187,17 @@ def sidebar_filters(df: pd.DataFrame) -> pd.DataFrame:
     routes_sorted = sorted(routes_numeric, key=lambda x: float(x) if pd.notna(x) else 0)
     routes = [str(route) for route in routes_sorted]
 
-    # Route selection（最多 3 條；預設不選）
+    # Route selection (up to 3; default none)
     route_options = routes
     route_sel = st.sidebar.multiselect(
         "Route (max 3)", route_options, default=[], key="route_sel"
     )
     all_routes = False
     if len(route_sel) > 3:
-        st.sidebar.warning("已選超過 3 條路線，僅套用前 3 條。")
-    # 最多取前三條
+        st.sidebar.warning("More than 3 routes selected; only the first 3 will apply.")
+    # Take at most the first three
     route_sel_eff = route_sel[:3]
-    # 將選擇同步到 session，供 KPI 與其他元件參考（含相容鍵名）
+    # Sync selections to session for KPIs and other components (compatible keys)
     st.session_state["selected_routes"] = route_sel_eff
     st.session_state["routes_selected"] = route_sel_eff
     st.session_state["routes_selected_count"] = len(route_sel_eff)
@@ -222,12 +222,12 @@ def sidebar_filters(df: pd.DataFrame) -> pd.DataFrame:
         base_mask &= df["month"].isin(month_sel)
     base_mask &= df["hour"].between(hour_rng[0], hour_rng[1])
 
-    # 只保留「每路線」Lane Type；不提供全域 Lane Type（避免全路線匯總誤解）
+    # Only per-route Lane Type; do not provide a global Lane Type (avoid cross-route aggregation confusion)
     type_col_exists = "type" in df.columns
 
-    # 未選路線（S0）：提示並避免回傳全路線資料以免誤解
+    # No routes selected (S0): prompt and return empty to avoid implying network-wide data
     if not route_sel_eff:
-        st.sidebar.info("請從 Route 中選擇 1–3 條以開始（S0）。")
+        st.sidebar.info("Please select 1–3 routes under Route to begin (S0).")
         return df.iloc[0:0].copy()
 
     has_abs_pm = ("abs_pm" in df.columns) and (df["abs_pm"].notna().any())
@@ -249,18 +249,18 @@ def sidebar_filters(df: pd.DataFrame) -> pd.DataFrame:
                 )
                 continue
 
-            # Lane Type（每路線）：在 base_mask + route 條件下的可用型態
+            # Lane Type (per route): available types under base_mask + route
             selected_type_r = None
             if type_col_exists:
                 types_avail_r = (
                     df_r["type"].dropna().astype(str).str.upper().unique().tolist()
                 )
-                # 僅顯示 ML/HV 的交集，若資料有其他值則附加其餘
+                # Prefer ML/HV first; append other values if present
                 ordered = [t for t in ["ML", "HV"] if t in set(types_avail_r)]
                 extras = [t for t in types_avail_r if t not in set(["ML", "HV"])]
                 opts_r = ordered + extras
                 if not opts_r:
-                    st.caption("No lane type info for this route; 將不套用型態篩選。")
+                    st.caption("No lane type info for this route; lane type filter will not be applied.")
                 else:
                     default_idx = 0
                     if "ML" in opts_r:
@@ -270,12 +270,12 @@ def sidebar_filters(df: pd.DataFrame) -> pd.DataFrame:
                         options=opts_r,
                         index=default_idx,
                         key=f"lane_type_{r}",
-                        help="選擇此路線的車道型態（ML=Main Lane, HV=HOV Lane）",
+                        help="Select lane type for this route (ML=Main Lane, HV=HOV Lane).",
                     )
                     if "HV" not in set(types_avail_r):
-                        st.caption("HV（HOV）在此路線目前條件下無資料")
+                        st.caption("HV (HOV) has no data under current conditions for this route.")
 
-            # 初始 route 遮罩（含型態）
+            # Initial route mask (including lane type)
             if selected_type_r and type_col_exists:
                 rd_mask = (df["route"].astype(str) == str(r)) & (
                     df["type"].astype(str).str.upper() == selected_type_r
@@ -287,8 +287,8 @@ def sidebar_filters(df: pd.DataFrame) -> pd.DataFrame:
             else:
                 rd_mask = df["route"].astype(str) == str(r)
 
-            # Direction 選擇：單選 North/South 或 East/West，並提供 Two‑way（sum）
-            # 先偵測可用方向，使用第一個字母（N/S/E/W）做正規化
+            # Direction selection: North/South or East/West, and Two‑way (sum)
+            # Detect available directions and normalize by first letter (N/S/E/W)
             dir_options_r = []
             if "direction" in df.columns:
                 dir_options_r = (
@@ -302,18 +302,18 @@ def sidebar_filters(df: pd.DataFrame) -> pd.DataFrame:
                 )
             dir_set = set(dir_options_r)
 
-            # 判斷此路線的方向型態與 radio 選項
+            # Determine this route's direction type and radio options
             if ("N" in dir_set) or ("S" in dir_set):
                 dir_radio_opts = ["North", "South", "Two-way (sum)"]
-                default_idx = 0  # 預設 North
+                default_idx = 0  # default North
                 dir_mode = st.radio(
                     "Direction",
                     options=dir_radio_opts,
                     index=default_idx,
                     key=f"dir_mode_{r}",
-                    help="選擇方向；Two-way（sum）為雙向平均流量的加總（單向缺資料則退化為單向）",
+                    help="Select direction; Two-way (sum) adds the two directional average flows (falls back to one-way if the other is missing).",
                 )
-                # 依選擇建立遮罩：Two‑way 不限制方向；單向以首字母比對（N 或 S）
+                # Build mask by selection: Two‑way = no direction filter; one-way uses first-letter match (N or S)
                 if dir_mode == "North":
                     rd_mask = df["route"].astype(str) == str(r)
                     rd_mask &= df["direction"].astype(str).str.upper().str[0] == "N"
@@ -326,13 +326,13 @@ def sidebar_filters(df: pd.DataFrame) -> pd.DataFrame:
                     rd_mask &= df["type"].astype(str).str.upper() == selected_type_r
             elif ("E" in dir_set) or ("W" in dir_set):
                 dir_radio_opts = ["East", "West", "Two-way (sum)"]
-                default_idx = 0  # 預設 East
+                default_idx = 0  # default East
                 dir_mode = st.radio(
                     "Direction",
                     options=dir_radio_opts,
                     index=default_idx,
                     key=f"dir_mode_{r}",
-                    help="選擇方向；Two-way（sum）為雙向平均流量的加總（單向缺資料則退化為單向）",
+                    help="Select direction; Two-way (sum) adds the two directional average flows (falls back to one-way if the other is missing).",
                 )
                 if dir_mode == "East":
                     rd_mask = df["route"].astype(str) == str(r)
@@ -345,7 +345,7 @@ def sidebar_filters(df: pd.DataFrame) -> pd.DataFrame:
                 if selected_type_r and type_col_exists:
                     rd_mask &= df["type"].astype(str).str.upper() == selected_type_r
             else:
-                # 無 direction 欄位或皆為缺失：僅以 route/type 過濾
+                # No direction column or values: filter by route/type only
                 st.caption(
                     "This route has no standard N/S/E/W direction values or missing direction column."
                 )
@@ -377,7 +377,7 @@ def sidebar_filters(df: pd.DataFrame) -> pd.DataFrame:
                 abs_max = float(np.nanmax(df_rd["abs_pm"].values))
                 # Default to global at both ends; step is 0.1 mile
                 abs_rng = st.slider(
-                    f"abs_pm 範圍（{r}）",
+                    f"abs_pm Range ({r})",
                     min_value=float(np.floor(abs_min)),
                     max_value=float(np.ceil(abs_max)),
                     value=(float(np.floor(abs_min)), float(np.ceil(abs_max))),
@@ -393,7 +393,7 @@ def sidebar_filters(df: pd.DataFrame) -> pd.DataFrame:
                 )
                 # Station list multiple selection (default to all within range)
                 selected_station_ids = st.multiselect(
-                    f"站點多選（{r}）",
+                    f"Station Multi-select ({r})",
                     options=[s for s in station_sorted if s in set(in_range_ids)],
                     default=in_range_ids,
                     key=f"st_sel_{r}",
@@ -402,30 +402,30 @@ def sidebar_filters(df: pd.DataFrame) -> pd.DataFrame:
                     f"Selected {len(selected_station_ids)} stations (within abs_pm)"
                 )
             else:
-                st.info("無 abs_pm 欄位或資料為空，改以 station 清單選擇。")
+                st.info("abs_pm is missing or empty; using station list selection instead.")
                 selected_station_ids = st.multiselect(
-                    f"Station Multiple Selection ({r})",
+                    f"Station Multi-select ({r})",
                     options=station_sorted,
                     default=station_sorted,
                     key=f"st_sel_{r}",
                 )
 
-            # 本路線的站點遮罩
+            # Station mask for this route
             if selected_station_ids:
                 rd_station_mask = df["station"].astype(str).isin(selected_station_ids)
             else:
-                # 若沒選到（例如範圍過窄），避免全排除：只套用 route+direction
+                # If none selected (e.g., too narrow range), avoid excluding all: apply route+direction only
                 rd_station_mask = pd.Series(True, index=df.index)
 
             route_union_mask |= rd_mask & rd_station_mask
 
-    # 最終遮罩
+    # Final mask
     final_mask = base_mask & route_union_mask
     return df[final_mask].copy()
 
 
 def render_kpis(df: pd.DataFrame) -> None:
-    # 以 route_sel（或向後相容鍵）檢測是否未選路線（S0）
+    # Detect S0 (no routes) via route_sel (or backward-compatible keys)
     selected_routes = st.session_state.get(
         "route_sel", st.session_state.get("selected_routes", [])
     )
@@ -438,8 +438,8 @@ def render_kpis(df: pd.DataFrame) -> None:
 
     s0_no_routes = routes_selected_count == 0
 
-    # KPI 的資料來源：預設使用傳入的 df；
-    # 若未選路線且 session_state 提供 df_all，則改以 df_all 展示「全資料在目前 Year/Month 下」的 KPI。
+    # KPI source: default to provided df;
+    # if no routes and session_state provides df_all, use df_all to show KPIs across all data under current Year/Month.
     df_for_metrics = df
     if s0_no_routes and isinstance(st.session_state.get("df_all"), pd.DataFrame):
         base_df = st.session_state["df_all"]
@@ -451,14 +451,14 @@ def render_kpis(df: pd.DataFrame) -> None:
         if months_sel:
             m &= base_df["month"].isin(months_sel)
         df_for_metrics = base_df[m].copy()
-        # S0：僅納入 ML（Main Lane）以計算 Avg Speed/Flow；若無 type 欄或無 ML，則退回全部型態
+        # S0: include ML (Main Lane) only for Avg Speed/Flow; if no type column or no ML, fall back to all types
         if "type" in df_for_metrics.columns:
             ml_mask = df_for_metrics["type"].astype(str).str.upper() == "ML"
             if ml_mask.any():
                 df_for_metrics = df_for_metrics[ml_mask].copy()
     df_ym = df_for_metrics
 
-    # 計算 KPI 數值（站點數、平均速率、平均流量、路線數）
+    # Compute KPI values (stations, average speed, average flow, routes)
     if isinstance(df_ym, pd.DataFrame) and not df_ym.empty:
         stations = df_ym["station"].nunique() if "station" in df_ym.columns else 0
         routes_present = df_ym["route"].nunique() if "route" in df_ym.columns else 0
@@ -505,10 +505,10 @@ def render_kpis(df: pd.DataFrame) -> None:
     with c4:
         st.metric("Avg Flow", f"{avg_flow_val:0.1f}" if pd.notna(avg_flow_val) else "-")
 
-    # S0 模式說明：避免誤解為「選取了所有路線」，明確標示為全域概覽
+    # S0 mode: clarify this is a global overview (avoid implying all routes are selected)
     if s0_no_routes:
         st.caption(
-            "Global mode – KPIs across all stations (ML only) under selected Year/Month; simple averages. 選擇 1–3 條路線以切換為 Route 模式。"
+            "Global mode – KPIs across all stations (ML only) under selected Year/Month; simple averages. Select 1–3 routes to switch to Route mode."
         )
 
 
@@ -532,16 +532,16 @@ def _render_flow_by_month_for_route(
 
     cat_months = pd.Categorical(df_r["month"], categories=month_order, ordered=True)
 
-    # 方向模式（單向或 Two‑way（sum））：從 session 取得
+    # Direction mode (one-way or Two‑way (sum)): from session
     dir_mode = st.session_state.get(f"dir_mode_{r}")
 
-    # Bars：
-    # - 單向：在目前資料（已由 sidebar 過濾為單向）上取平均
-    # - Two‑way（sum）：先算每方向的月別平均，再將兩個相反方向相加（單向缺資料則退化為單向）
+    # Bars:
+    # - One-way: average within current single-direction data (filtered by sidebar)
+    # - Two‑way (sum): monthly average per direction, then sum opposing directions (fallback to one-way if the other is missing)
     if isinstance(dir_mode, str) and "Two-way" in dir_mode:
         df_tmp = df_r.copy()
         df_tmp["dir_letter"] = df_tmp["direction"].astype(str).str.upper().str[0]
-        # 判斷使用 N/S 或 E/W 組合
+        # Choose N/S or E/W pair
         letters = set(df_tmp["dir_letter"].dropna().unique().tolist())
         if ("N" in letters) or ("S" in letters):
             pair = ("N", "S")
@@ -693,15 +693,15 @@ def _render_flow_by_month_for_route(
 
 def _render_stations_map(base_df: pd.DataFrame, filtered_df: pd.DataFrame) -> None:
     """
-    使用 Plotly（scatter_map）渲染「簡化版」站點地圖（無動畫）：
-    - 未選 Route（S0）：依側欄 Year/Month 過濾後，聚合為每站「選定期間平均流量」並著色（綠→黃→紅）。
-    - 已選 Route（S1/S2）：使用目前篩選結果（含 Route/Direction/Type/Stations），同樣聚合為每站「平均流量」並著色。
+    Render a simplified stations map (no animation) with Plotly scatter_map:
+    - S0 (no routes selected): After applying Year/Month filters from the sidebar, aggregate to each station's average flow and color (green→yellow→red).
+    - S1/S2 (routes selected): Use current filters (Route/Direction/Type/Stations) and aggregate to per-station average flow.
     """
 
     if base_df.empty or not {"latitude", "longitude"}.issubset(base_df.columns):
         return
 
-    # 年份選擇（若無則使用所有）
+    # Year selection (use all if none)
     years_sel = st.session_state.get("year_sel")
     if years_sel:
         base_df_year = base_df[base_df["year"].isin(years_sel)].copy()
@@ -711,17 +711,17 @@ def _render_stations_map(base_df: pd.DataFrame, filtered_df: pd.DataFrame) -> No
     has_routes = not filtered_df.empty
 
     if not has_routes:
-        # S0：依 Year×Month 計算各站平均流量，提供 Year / Month 兩種檢視模式
+        # S0: compute per-station average flow by Year×Month; offer Year/Month views
         df_map = base_df_year.dropna(subset=["latitude", "longitude"]).copy()
-        # 僅取使用者勾選月份
+        # Only keep months selected by the user
         months_sel = st.session_state.get("month_sel")
         if months_sel:
             df_map = df_map[df_map["month"].isin(months_sel)]
-        # 型別轉換
+        # Type conversion
         df_map["year"] = pd.to_numeric(df_map["year"], errors="coerce").astype("Int64")
         df_map["avg_flow"] = pd.to_numeric(df_map["avg_flow"], errors="coerce")
 
-        # 聚合：station×year×month
+        # Aggregate: station×year×month
         agg_dict = {
             "latitude": ("latitude", "median"),
             "longitude": ("longitude", "median"),
@@ -736,7 +736,7 @@ def _render_stations_map(base_df: pd.DataFrame, filtered_df: pd.DataFrame) -> No
         )
         if grp_ym.empty:
             return
-        # 簡化模式：直接依側欄 Year/Month 聚合為每站「平均流量」，繪製後返回
+        # Simplified mode: aggregate by Year/Month to each station's average flow, plot, and return
         df_for_map = df_map.copy()
         grp = (
             df_for_map.groupby(["station"], dropna=True)
@@ -787,7 +787,7 @@ def _render_stations_map(base_df: pd.DataFrame, filtered_df: pd.DataFrame) -> No
         return
 
     else:
-        # 已選路線：依目前篩選條件聚合為每站「平均流量」
+        # Routes selected: aggregate to per-station average flow under current filters
         df_map = filtered_df.dropna(subset=["latitude", "longitude"]).copy()
         df_map["avg_flow"] = pd.to_numeric(df_map["avg_flow"], errors="coerce")
         grp = (
@@ -839,7 +839,7 @@ def _render_stations_map(base_df: pd.DataFrame, filtered_df: pd.DataFrame) -> No
 
 
 def render_charts(base_df: pd.DataFrame, df: pd.DataFrame) -> None:
-    # 地圖：優先顯示（含 S0 未選路線時的全站點地圖）
+    # Map first (includes full-station map for S0/no routes)
     _render_stations_map(base_df, df)
     if df.empty:
         st.info("No data available for current filters.")
@@ -862,7 +862,7 @@ def render_charts(base_df: pd.DataFrame, df: pd.DataFrame) -> None:
         "December",
     ]
     selected_routes = st.session_state.get("route_sel", [])
-    # 建立年度配色對應（在目前篩選資料範圍內全域一致）
+    # Build year color mapping (globally consistent within current filtered data)
     year_color_map = {}
     if "year" in df.columns:
         years_vals = pd.Series(df["year"].dropna()).tolist()
@@ -915,7 +915,7 @@ def main():
     st.caption("Data source: CalTrans PeMS (District 12); Data period: 2019 to 2025")
 
     df = load_all_processed()
-    # 將全量資料存入 session，便於 S0（未選路線）時 KPI 使用 Year/Month 口徑顯示
+    # Store full dataset in session; allows S0 KPIs to use Year/Month scope when no routes selected
     st.session_state["df_all"] = df
     if df.empty:
         st.warning(
