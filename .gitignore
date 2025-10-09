@@ -60,3 +60,6 @@ config/credentials.env
 # Coding
 AGENTS.md
 CLAUDE.md
+
+# test folder
+cloud-test/
