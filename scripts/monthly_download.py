@@ -20,19 +20,60 @@ from dotenv import load_dotenv
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from config.settings import RAW_DATA_DIR
-
-# Use relative path for local development, absolute path for deployment
+# IMPORTANT: Load environment variables BEFORE importing config.settings
+# This ensures config.settings reads the correct environment variable values
 if os.path.exists("config/credentials.env"):
     # local development environment
     load_dotenv("config/credentials.env")
-    data_path = str(RAW_DATA_DIR)
 else:
     # VPS deployment environment
     load_dotenv("/opt/pems-auto-downloader/config/credentials.env")
+
+# Import config.settings AFTER loading environment variables
+from config.settings import RAW_DATA_DIR, R2_UPLOAD_ENABLED
+
+# Set data path
+if os.path.exists("config/credentials.env"):
+    data_path = str(RAW_DATA_DIR)
+else:
     data_path = "/opt/pems-auto-downloader/data"
 
+# Import other modules
 from src.pems.core.handler import PeMSHandler
+from src.pems.storage import R2StorageHandler
+
+
+def post_download_handler(file_path, file_metadata):
+    """
+    Post-download callback handler for R2 upload.
+
+    Args:
+        file_path (Path): Downloaded file path
+        file_metadata (dict): File metadata (year, month, district, etc.)
+    """
+    print(f"Handling file: {file_path.name}")
+
+    try:
+        # Check if R2 upload is enabled
+        if not R2_UPLOAD_ENABLED:
+            print("R2 upload is not enabled（R2_UPLOAD_ENABLED=false）")
+            return
+
+        # Initialize R2 handler
+        r2_handler = R2StorageHandler()
+
+        # Upload using smart strategy
+        # Note: Currently uploading raw files; processed files will be added
+        # when integrating with data_processor.py in future phases
+        r2_handler.upload_with_strategy(
+            file_path=file_path, file_type="raw", file_metadata=file_metadata
+        )
+
+        print(f"R2 upload completed: {file_path.name}")
+
+    except Exception as e:
+        print(f"R2 upload failed: {str(e)}")
+        # Don't interrupt the download process
 
 
 def main():
@@ -62,7 +103,7 @@ def main():
         districts = ["12"]
         file_types = ["station_hour"]
 
-        # Execute download
+        # Execute download with R2 upload callback
         pems.download_files(
             start_year=target_year,
             end_year=target_year,
@@ -70,6 +111,7 @@ def main():
             file_types=file_types,
             months=target_month_list,
             save_path=data_path,
+            post_download_callback=post_download_handler,
         )
 
         print(f"{target_year} {target_month} data download completed")

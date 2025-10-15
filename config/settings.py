@@ -27,6 +27,16 @@ CLEARING_HOUSE_URL = (
 )
 DISTRICTS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"]
 
+# R2 Storage Configuration
+R2_ENDPOINT = os.getenv("R2_ENDPOINT", "")
+R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID", "")
+R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY", "")
+R2_BUCKET = os.getenv("R2_BUCKET", "pems-processed")
+R2_UPLOAD_ENABLED = os.getenv("R2_UPLOAD_ENABLED", "false").lower() == "true"
+R2_UPLOAD_RAW = os.getenv("R2_UPLOAD_RAW", "true").lower() == "true"
+R2_RAW_ROLLING_MONTHS = int(os.getenv("R2_RAW_ROLLING_MONTHS", "12"))
+R2_LOCAL_RAW_RETENTION_DAYS = int(os.getenv("R2_LOCAL_RAW_RETENTION_DAYS", "30"))
+
 # data processing constants
 RAW_HOURLY_COLS = [
     "time_stamp_string",

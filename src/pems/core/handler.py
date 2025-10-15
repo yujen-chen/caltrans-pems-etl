@@ -170,9 +170,16 @@ class PeMSHandler(object):
         return pd.DataFrame()
 
     def download_files(
-        self, start_year, end_year, districts, file_types, months, save_path=None
+        self, start_year, end_year, districts, file_types, months, save_path=None,
+        post_download_callback=None
     ):
-        """Download all text files for user's query."""
+        """Download all text files for user's query.
+
+        Args:
+            post_download_callback: Optional callback function called after each
+                                    successful download. Receives file_path (Path)
+                                    and file_metadata (dict).
+        """
         # Create data directory
         save_path = self._create_data_directory(save_path=save_path)
 
@@ -205,6 +212,17 @@ class PeMSHandler(object):
                     files_downloaded = pd.concat(
                         [files_downloaded, row.to_frame().T], ignore_index=True
                     )
+
+                    # Callback Hook: Execute post-download processing
+                    if post_download_callback:
+                        try:
+                            post_download_callback(
+                                file_path=Path(save_path) / row["file_name"],
+                                file_metadata=row.to_dict()
+                            )
+                        except Exception as e:
+                            self.log.error(f"Callback error for {row['file_name']}: {str(e)}")
+
                 time.sleep(5)
 
             # Save lookup csv
