@@ -315,6 +315,7 @@ def sum_for_hours_by_month(clean_district_station_hour_df):
         "route",
         "direction",
         "type",
+        "year",
         "hour",
         "month",
         "lanes",
