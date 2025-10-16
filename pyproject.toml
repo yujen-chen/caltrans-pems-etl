@@ -19,6 +19,7 @@ dependencies = [
     "plotly>=6.0.0",
     "boto3>=1.34.10",
     "tenacity>=8.0.0",
+    "duckdb>=1.0.0",
 ]
 
 [dependency-groups]
@@ -32,6 +33,9 @@ dev = [
 
 [project.scripts]
 monthly-download = "scripts.monthly_download:main"
+query-data = "scripts.query_data:main"
+test-duckdb = "scripts.test_duckdb:main"
+demo-duckdb = "scripts.demo_duckdb:main"
 
 
 [build-system]
