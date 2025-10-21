@@ -8,28 +8,20 @@ This script is used to download PeMS data from CalTrans-PeMS.
 Usage:
     uv run python scripts/monthly_download.py
 
-
+Note:
+    Environment variables are now loaded automatically by config.settings
+    (Improvement Plan A - Proactive Loading Pattern)
 """
 
 import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from dotenv import load_dotenv
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-# IMPORTANT: Load environment variables BEFORE importing config.settings
-# This ensures config.settings reads the correct environment variable values
-if os.path.exists("config/credentials.env"):
-    # local development environment
-    load_dotenv("config/credentials.env")
-else:
-    # VPS deployment environment
-    load_dotenv("/opt/pems-auto-downloader/config/credentials.env")
-
-# Import config.settings AFTER loading environment variables
+# Import config.settings (which automatically loads environment variables)
 from config.settings import RAW_DATA_DIR, R2_UPLOAD_ENABLED
 
 # Set data path

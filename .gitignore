@@ -19,6 +19,16 @@ data/raw/*
 *.parquet
 *.json
 
+# DuckDB database files
+*.duckdb
+*.wal
+:memory*
+
+# Common database files
+*.db
+*.sqlite
+*.sqlite3
+
 # Keep the Data folder structure
 !data/exports/.gitkeep
 !data/meta/.gitkeep

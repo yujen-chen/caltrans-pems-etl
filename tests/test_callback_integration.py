@@ -1,10 +1,18 @@
+"""
+Test callback integration
+
+Note:
+    Environment variables are now loaded automatically by config.settings
+    (Improvement Plan A - Proactive Loading Pattern)
+"""
+
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Import automatically loads environment variables
 from scripts.monthly_download import post_download_handler
 
 

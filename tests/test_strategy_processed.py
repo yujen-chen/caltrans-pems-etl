@@ -1,13 +1,19 @@
+"""
+Test smart strategy - Processed file upload
+
+Note:
+    Environment variables are now loaded automatically by config.settings
+    (Improvement Plan A - Proactive Loading Pattern)
+"""
+
 import sys
 from pathlib import Path
 from datetime import datetime
-from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-load_dotenv("config/credentials.env")
-
-from pems.storage import R2StorageHandler
+# Import automatically loads environment variables
+from src.pems.storage import R2StorageHandler
 
 
 print("🎯 Testing smart strategy - Processed file upload...")

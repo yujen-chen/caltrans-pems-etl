@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
-"""Check R2 permissions and existing buckets"""
+"""
+Check R2 permissions and existing buckets
+
+Note:
+    Environment variables are now loaded automatically by config.settings
+    (Improvement Plan A - Proactive Loading Pattern)
+"""
 
 import sys
 from pathlib import Path
-from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-load_dotenv("config/credentials.env")
 
-from pems.storage import R2StorageHandler
+# Import automatically loads environment variables
+from src.pems.storage import R2StorageHandler
 
 def check_r2_permissions():
     """Check R2 permissions and existing resources"""

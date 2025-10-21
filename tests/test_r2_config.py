@@ -1,15 +1,18 @@
-"""test R2 settings"""
+"""
+test R2 settings
 
-import os
+Note:
+    Environment variables are now loaded automatically by config.settings
+    (Improvement Plan A - Proactive Loading Pattern)
+"""
+
 import sys
 from pathlib import Path
-from dotenv import load_dotenv
 
 # Add project root to Python path for config imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-load_dotenv("config/credentials.env")
-
+# Import config.settings (which automatically loads environment variables)
 from config.settings import (
     R2_ENDPOINT,
     R2_ACCESS_KEY_ID,

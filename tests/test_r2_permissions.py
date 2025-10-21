@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
-"""Test R2 permissions and operation scope"""
+"""
+Test R2 permissions and operation scope
+
+Note:
+    Environment variables are now loaded automatically by config.settings
+    (Improvement Plan A - Proactive Loading Pattern)
+"""
 
 import sys
 from pathlib import Path
-from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-load_dotenv("config/credentials.env")
 
+# Import config to load environment variables
+import config.settings  # noqa: F401
 import boto3
 from botocore.exceptions import ClientError
 

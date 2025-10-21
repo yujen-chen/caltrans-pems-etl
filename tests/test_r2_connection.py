@@ -1,15 +1,19 @@
+"""
+Test R2 connection
+
+Note:
+    Environment variables are now loaded automatically by config.settings
+    (Improvement Plan A - Proactive Loading Pattern)
+"""
+
 import sys
 from pathlib import Path
-from dotenv import load_dotenv
 
 # Add project root to Python path for config imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Load environment variables FIRST
-load_dotenv("config/credentials.env")
-
-# THEN import pems.storage
-from pems.storage import R2StorageHandler
+# Import automatically loads environment variables
+from src.pems.storage import R2StorageHandler
 
 
 print("Testing R2 Connection...")

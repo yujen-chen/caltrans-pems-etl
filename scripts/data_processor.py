@@ -1,9 +1,20 @@
+"""
+data_processor.py
+-----------------
+Process raw PeMS data into aggregated hourly statistics.
+
+Note:
+    Environment variables are now loaded automatically by config.settings
+    (Improvement Plan A - Proactive Loading Pattern)
+"""
+
 import pandas as pd
 import numpy as np
 import holidays
 import glob
 import time
 import sys
+import os
 from pathlib import Path
 from collections import defaultdict
 import re
@@ -11,6 +22,7 @@ import re
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+# Import config.settings (which automatically loads environment variables)
 from config.settings import (
     RAW_DATA_DIR,
     PROCESSED_DATA_DIR,
@@ -18,7 +30,16 @@ from config.settings import (
     MIN_PCT_OBS,
     RAW_HOURLY_COLS,
     FINAL_COLS,
+    R2_UPLOAD_ENABLED,
 )
+
+# Import R2 storage handler for uploading processed files
+try:
+    from src.pems.storage import R2StorageHandler
+    R2_AVAILABLE = True
+except ImportError:
+    R2_AVAILABLE = False
+    print("Warning: R2StorageHandler not available, skipping R2 upload")
 
 
 # SETTINGS
@@ -242,8 +263,64 @@ def update_yearly_file(new_monthly_data, year, existing_file_path=None):
         print(f"saved to: {year_file}")
         print(f"total {len(combined_df):,} records")
 
+        # Upload to R2 (Cloudflare R2 cloud storage)
+        _upload_processed_to_r2(year_file, year)
+
     except Exception as e:
         print(f"error saving yearly file: {e}")
+
+
+def _upload_processed_to_r2(parquet_file_path, year):
+    """
+    Upload processed parquet file to R2 cloud storage.
+
+    This function is called after successfully saving a processed parquet file.
+    It uploads the file to R2 using the smart upload strategy (processed files
+    are always uploaded to processed/YYYY/ prefix).
+
+    Args:
+        parquet_file_path (Path): Path to the processed parquet file
+        year (str): Year of the data (used for R2 key prefix)
+    """
+    # Check if R2 upload is enabled
+    if not R2_UPLOAD_ENABLED:
+        print("R2 upload is disabled (R2_UPLOAD_ENABLED=false)")
+        return
+
+    # Check if R2 handler is available
+    if not R2_AVAILABLE:
+        print("R2StorageHandler is not available, skipping upload")
+        return
+
+    try:
+        print(f"\n--- Uploading to R2 cloud storage ---")
+
+        # Initialize R2 handler
+        r2_handler = R2StorageHandler()
+
+        # Prepare file metadata
+        file_metadata = {
+            "year": year,
+            "month": "yearly_aggregate",  # Processed files contain all months
+        }
+
+        # Upload using smart strategy (processed files always uploaded)
+        s3_uri = r2_handler.upload_with_strategy(
+            file_path=parquet_file_path,
+            file_type="processed",
+            file_metadata=file_metadata,
+        )
+
+        if s3_uri:
+            print(f"✅ Successfully uploaded to R2: {s3_uri}")
+        else:
+            print("⚠️  Upload to R2 was skipped or failed (check logs above)")
+
+    except Exception as e:
+        print(f"❌ Failed to upload to R2: {str(e)}")
+        print("⚠️  Continuing without R2 upload (local file is saved)")
+        # Don't raise exception - we don't want to interrupt the processing
+        # even if R2 upload fails
 
 
 def consume_raw(raw_file_path):

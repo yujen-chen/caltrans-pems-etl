@@ -140,13 +140,23 @@ class DuckDBQueryEngine:
             # Setup data source (local or R2)
             if self.data_source == "local":
                 self._setup_local_data()
-            elif self.data_source == "r2" and R2_UPLOAD_ENABLED:
-                self._setup_r2_data()
+            elif self.data_source == "r2":
+                if R2_UPLOAD_ENABLED:
+                    self._setup_r2_data()
+                else:
+                    logger.warning(
+                        "⚠️  R2 requested but R2_UPLOAD_ENABLED=false, "
+                        "falling back to local data"
+                    )
+                    self.data_source = "local"
+                    self._setup_local_data()
             else:
                 logger.warning(
-                    f"⚠️  Data source '{self.data_source}' not configured, "
-                    "query engine ready but no data loaded"
+                    f"⚠️  Unknown data source '{self.data_source}', "
+                    "falling back to local data"
                 )
+                self.data_source = "local"
+                self._setup_local_data()
 
         except Exception as e:
             logger.error(f"❌ Database setup failed: {e}")
@@ -180,7 +190,9 @@ class DuckDBQueryEngine:
         logger.info("Setting up local Parquet data source...")
 
         # Find all processed Parquet files
-        processed_files = list(PROCESSED_DATA_DIR.glob("*_station_hour_processed.parquet"))
+        processed_files = list(
+            PROCESSED_DATA_DIR.glob("*_station_hour_processed.parquet")
+        )
 
         if not processed_files:
             logger.warning(f"⚠️  No processed files found in {PROCESSED_DATA_DIR}")
@@ -192,22 +204,28 @@ class DuckDBQueryEngine:
 
         try:
             # Create view (virtual table, no data copied)
-            self.db.execute(f"""
+            self.db.execute(
+                f"""
                 CREATE OR REPLACE VIEW traffic_data AS
                 SELECT * FROM read_parquet('{file_pattern}')
-            """)
+            """
+            )
 
             # Log summary statistics
-            row_count = self.db.execute("SELECT COUNT(*) as cnt FROM traffic_data").df()["cnt"][0]
+            row_count = self.db.execute(
+                "SELECT COUNT(*) as cnt FROM traffic_data"
+            ).df()["cnt"][0]
             logger.info(
                 f"✅ Loaded {len(processed_files)} Parquet files "
                 f"({row_count:,} total rows) into 'traffic_data' view"
             )
 
             # Show available years (for debugging)
-            years = self.db.execute(
-                "SELECT DISTINCT year FROM traffic_data ORDER BY year"
-            ).df()["year"].tolist()
+            years = (
+                self.db.execute("SELECT DISTINCT year FROM traffic_data ORDER BY year")
+                .df()["year"]
+                .tolist()
+            )
             logger.info(f"📅 Available years: {years}")
 
         except Exception as e:
@@ -266,12 +284,17 @@ class DuckDBQueryEngine:
             self.db.execute("SET s3_url_style='path'")  # R2 uses path-style URLs
 
             # Create view pointing to R2 bucket
-            s3_pattern = f"s3://{R2_BUCKET}/processed/*_station_hour_processed.parquet"
+            # Use ** for recursive glob to match files in subdirectories (processed/YYYY/*.parquet)
+            s3_pattern = (
+                f"s3://{R2_BUCKET}/processed/**/*_station_hour_processed.parquet"
+            )
 
-            self.db.execute(f"""
+            self.db.execute(
+                f"""
                 CREATE OR REPLACE VIEW traffic_data AS
                 SELECT * FROM read_parquet('{s3_pattern}')
-            """)
+            """
+            )
 
             logger.info(
                 f"✅ Loaded {len(processed_files)} R2 files into 'traffic_data' view"
@@ -286,7 +309,9 @@ class DuckDBQueryEngine:
             self.data_source = "local"
             self._setup_local_data()
 
-    def execute(self, sql: str, params: Optional[List[Any]] = None) -> duckdb.DuckDBPyRelation:
+    def execute(
+        self, sql: str, params: Optional[List[Any]] = None
+    ) -> duckdb.DuckDBPyRelation:
         """
         Execute raw SQL query.
 
@@ -308,7 +333,7 @@ class DuckDBQueryEngine:
         - Performance: DuckDB auto-optimizes query plan (like PostgreSQL EXPLAIN)
 
         Example:
-            >>> result = engine.execute("SELECT * FROM traffic_data WHERE route = ?", ["I-5"])
+            >>> result = engine.execute("SELECT * FROM traffic_data WHERE route = ?", [5])
             >>> df = result.df()  # Convert to pandas DataFrame
         """
         try:
@@ -380,7 +405,7 @@ class DuckDBQueryEngine:
 
     def query_traffic_by_route(
         self,
-        route: str,
+        route: int,
         direction: Optional[str] = None,
         year: Optional[int] = None,
     ) -> pd.DataFrame:
@@ -390,7 +415,7 @@ class DuckDBQueryEngine:
         This is a high-level API that abstracts SQL complexity for common route queries.
 
         Args:
-            route: Route name (e.g., "I-5", "I-405", "SR-91")
+            route: Route number as integer (e.g., 5 for I-5, 405 for I-405, 91 for SR-91)
             direction: Optional direction filter ("N", "S", "E", "W")
             year: Optional year filter (e.g., 2024)
 
@@ -409,11 +434,11 @@ class DuckDBQueryEngine:
 
         Example:
             >>> # Get all I-5 northbound traffic in 2024
-            >>> df = engine.query_traffic_by_route("I-5", direction="N", year=2024)
+            >>> df = engine.query_traffic_by_route(route=5, direction="N", year=2024)
             >>> print(f"Found {len(df):,} records")
 
             >>> # Get all I-405 traffic (all directions, all years)
-            >>> df = engine.query_traffic_by_route("I-405")
+            >>> df = engine.query_traffic_by_route(route=405)
         """
         # Build dynamic WHERE clause based on provided parameters
         # Industry note: Similar to query builders in Laravel, Knex.js
@@ -446,11 +471,10 @@ class DuckDBQueryEngine:
                 median_speed,
                 avg_occup,
                 lanes,
-                days_observed,
-                date
+                days_observed
             FROM traffic_data
             WHERE {where_clause}
-            ORDER BY year, month, date, hour
+            ORDER BY year, month, hour
         """
 
         logger.info(
@@ -466,7 +490,7 @@ class DuckDBQueryEngine:
             raise
 
     def query_hourly_patterns(
-        self, route: str, months: List[str], year: int = 2024
+        self, route: int, months: List[str], year: int = 2024
     ) -> pd.DataFrame:
         """
         Analyze hourly traffic patterns for specific months.
@@ -475,7 +499,7 @@ class DuckDBQueryEngine:
         Useful for understanding daily traffic cycles.
 
         Args:
-            route: Route name (e.g., "I-5")
+            route: Route number as integer (e.g., 5 for I-5, 405 for I-405)
             months: List of month names (e.g., ["January", "February", "March"])
             year: Year to analyze (default: 2024)
 
@@ -504,7 +528,7 @@ class DuckDBQueryEngine:
         Example:
             >>> # Analyze I-405 morning commute patterns in Q1
             >>> df = engine.query_hourly_patterns(
-            ...     route="I-405",
+            ...     route=405,
             ...     months=["January", "February", "March"],
             ...     year=2024
             ... )
