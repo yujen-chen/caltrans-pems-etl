@@ -195,10 +195,11 @@ FINAL_COLS = [
 ]
 
 # ============================================================================
-# STEP 9: DuckDB Configuration
+# STEP 9: DuckDB Configuration (Phase 2.1-2.3)
 # ============================================================================
 DUCKDB_PATH = os.getenv("DUCKDB_PATH", ":memory:")
-DUCKDB_CACHE_SIZE = int(os.getenv("DUCKDB_CACHE_SIZE", "100"))
+DUCKDB_CACHE_SIZE = int(os.getenv("DUCKDB_CACHE_SIZE", "100"))  # Max cached queries
+DUCKDB_CACHE_TTL = int(os.getenv("DUCKDB_CACHE_TTL", "300"))  # Cache TTL in seconds (5 min)
 DUCKDB_THREADS = int(os.getenv("DUCKDB_THREADS", "4"))
 DUCKDB_MEMORY_LIMIT = os.getenv("DUCKDB_MEMORY_LIMIT", "2GB")
 

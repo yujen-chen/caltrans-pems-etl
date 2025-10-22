@@ -20,6 +20,9 @@ import logging
 from pathlib import Path
 from typing import Optional, Union, List, Any, Dict
 import pandas as pd
+from collections import OrderedDict
+import hashlib
+import time
 
 from config.settings import (
     PROCESSED_DATA_DIR,
@@ -27,6 +30,7 @@ from config.settings import (
     DUCKDB_THREADS,
     DUCKDB_MEMORY_LIMIT,
     DUCKDB_CACHE_SIZE,
+    DUCKDB_CACHE_TTL,
     R2_UPLOAD_ENABLED,
     R2_ENDPOINT,
     R2_ACCESS_KEY_ID,
@@ -37,6 +41,254 @@ from config.settings import (
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+class QueryCache:
+    """
+    LRU (Least Recently Used) cache for query results.
+
+    Industry Alignment:
+    - Similar to: Redis (distributed cache), Memcached, Application-level cache
+    - Pattern: Cache-aside pattern (application manages cache)
+    - Use case: Reduce database load, improve dashboard response time
+
+    Design Decisions:
+    - LRU eviction: Remove least recently used items when cache is full
+    - TTL (Time To Live): Auto-expire stale results after X seconds
+    - Cache key: Hash of (SQL + params + data_source) for uniqueness
+
+    Performance Benefits:
+    - Cache hit: <1ms (in-memory lookup)
+    - Cache miss: 100-1000ms (DuckDB query)
+    - Target hit rate: >50% for dashboard workloads
+
+    Industry Comparison:
+    - Redis: Distributed, persistent, complex setup
+    - This: In-process, ephemeral, simple setup
+    - Trade-off: No cross-process sharing, but zero infra overhead
+
+    Attributes:
+        cache: OrderedDict for LRU behavior (preserves insertion order)
+        max_size: Maximum number of cached items (防止記憶體溢出)
+        ttl: Time-to-live in seconds (freshness guarantee)
+        timestamps: Track when each item was cached
+        hit_count: Cache hit counter (for metrics)
+        miss_count: Cache miss counter (for metrics)
+    """
+
+    def __init__(self, max_size: int = 100, ttl: int = 300):
+        """
+        Initialize LRU cache.
+
+        Args:
+            max_size: Maximum number of cached query results (default: 100)
+            ttl: Time-to-live in seconds (default: 300 = 5 minutes)
+
+        Industry Practice:
+        - Max size: Balance memory vs hit rate (100-1000 typical)
+        - TTL: Balance freshness vs performance (1-10 minutes typical)
+        - Similar to: Redis EXPIRE, Memcached expiration
+
+        Example:
+            >>> cache = QueryCache(max_size=50, ttl=600)  # 50 items, 10 min TTL
+        """
+        self.cache = OrderedDict()
+        self.max_size = max_size
+        self.ttl = ttl
+        self.timestamps = {}
+
+        # Metrics for monitoring (see Phase 2.3 requirements)
+        self.hit_count = 0
+        self.miss_count = 0
+
+        logger.info(f"✅ QueryCache initialized (max_size={max_size}, ttl={ttl}s)")
+
+    def _generate_key(self, sql: str, params: Optional[List[Any]], data_source: str) -> str:
+        """
+        Generate unique cache key from query components.
+
+        Uses MD5 hash for compact keys (security not needed here).
+
+        Args:
+            sql: SQL query string
+            params: Query parameters (or None)
+            data_source: "local" or "r2"
+
+        Returns:
+            str: MD5 hash of query signature
+
+        Industry Practice:
+        - Hash function: MD5 (fast, compact) or SHA256 (secure, slower)
+        - Key components: All factors that affect query results
+        - Similar to: HTTP ETag generation, database query fingerprinting
+
+        Example:
+            >>> key = cache._generate_key("SELECT * FROM t WHERE id=?", [5], "local")
+            >>> print(key)  # "a3f8c9b2e1d0..."
+        """
+        # Combine all query components into a single string
+        params_str = str(params) if params else ""
+        content = f"{sql}:{params_str}:{data_source}"
+
+        # Hash for compact storage (128-bit MD5 vs unlimited string length)
+        # Industry note: MD5 is deprecated for security, but fine for cache keys
+        return hashlib.md5(content.encode()).hexdigest()
+
+    def get(self, sql: str, params: Optional[List[Any]], data_source: str) -> Optional[pd.DataFrame]:
+        """
+        Retrieve cached query result.
+
+        Args:
+            sql: SQL query
+            params: Query parameters
+            data_source: Data source identifier
+
+        Returns:
+            pd.DataFrame if cache hit and not expired, None otherwise
+
+        Side Effects:
+            - Updates hit_count or miss_count
+            - Moves accessed item to end (LRU maintenance)
+            - Removes expired items
+
+        Industry Practice:
+        - Cache invalidation: Check TTL before returning
+        - LRU update: Move accessed item to end (most recently used)
+        - Metrics: Track hit/miss for monitoring
+
+        Example:
+            >>> result = cache.get("SELECT * FROM t", None, "local")
+            >>> if result is not None:
+            >>>     print("Cache hit!")
+            >>> else:
+            >>>     print("Cache miss, need to query database")
+        """
+        key = self._generate_key(sql, params, data_source)
+
+        # Check if key exists
+        if key not in self.cache:
+            self.miss_count += 1
+            return None
+
+        # Check if expired (TTL validation)
+        age = time.time() - self.timestamps[key]
+        if age > self.ttl:
+            # Remove expired entry
+            # Industry note: Lazy expiration (check on access, not proactive)
+            del self.cache[key]
+            del self.timestamps[key]
+            self.miss_count += 1
+            logger.debug(f"Cache expired: key={key[:8]}... (age={age:.1f}s > ttl={self.ttl}s)")
+            return None
+
+        # Cache hit! Move to end (mark as recently used)
+        # Industry note: OrderedDict.move_to_end() is O(1) operation
+        self.cache.move_to_end(key)
+        self.hit_count += 1
+
+        logger.debug(f"Cache hit: key={key[:8]}... (age={age:.1f}s)")
+        return self.cache[key]
+
+    def set(self, sql: str, params: Optional[List[Any]], data_source: str, result: pd.DataFrame):
+        """
+        Store query result in cache.
+
+        Args:
+            sql: SQL query
+            params: Query parameters
+            data_source: Data source identifier
+            result: Query result DataFrame
+
+        Side Effects:
+            - May evict oldest item if cache is full (LRU eviction)
+            - Updates timestamps for TTL tracking
+
+        Industry Practice:
+        - Eviction policy: LRU (remove least recently used)
+        - Atomic operation: Remove old + insert new (no intermediate state)
+        - Memory management: Limit cache size to prevent OOM
+
+        Example:
+            >>> df = engine.execute("SELECT * FROM t").df()
+            >>> cache.set("SELECT * FROM t", None, "local", df)
+        """
+        key = self._generate_key(sql, params, data_source)
+
+        # Evict oldest item if cache is full
+        # Industry note: Alternative policies: LFU (least frequently used), FIFO
+        if len(self.cache) >= self.max_size and key not in self.cache:
+            # Remove first item (oldest, least recently used)
+            # OrderedDict maintains insertion order
+            oldest_key = next(iter(self.cache))
+            del self.cache[oldest_key]
+            del self.timestamps[oldest_key]
+            logger.debug(f"Cache full, evicted: key={oldest_key[:8]}...")
+
+        # Store result and timestamp
+        self.cache[key] = result
+        self.timestamps[key] = time.time()
+
+        logger.debug(f"Cache set: key={key[:8]}... (size={len(self.cache)}/{self.max_size})")
+
+    def clear(self):
+        """
+        Clear all cached items.
+
+        Use Cases:
+        - Manual cache invalidation (e.g., after data update)
+        - Memory pressure (free up RAM)
+        - Testing (clean slate)
+
+        Industry Practice:
+        - Similar to: Redis FLUSHDB, Memcached flush_all
+        - When to use: Data refresh, deployment, debugging
+
+        Example:
+            >>> cache.clear()
+            >>> print("Cache cleared, all queries will hit database")
+        """
+        size = len(self.cache)
+        self.cache.clear()
+        self.timestamps.clear()
+        logger.info(f"✅ Cache cleared ({size} items removed)")
+
+    def get_stats(self) -> Dict[str, Any]:
+        """
+        Get cache performance metrics.
+
+        Returns:
+            dict: Performance statistics including:
+                - total_queries: Total cache accesses (hits + misses)
+                - cache_hits: Number of successful cache lookups
+                - cache_misses: Number of database queries needed
+                - cache_hit_rate: Percentage of cache hits (0.0-1.0)
+                - cache_size: Current number of cached items
+                - cache_max_size: Maximum cache capacity
+
+        Industry Practice:
+        - Monitoring: Export to Prometheus, Grafana, DataDog
+        - SLO (Service Level Objective): Target >50% hit rate
+        - Alerting: Alert if hit rate drops below threshold
+
+        Example:
+            >>> stats = cache.get_stats()
+            >>> print(f"Cache hit rate: {stats['cache_hit_rate']:.1%}")
+            >>> print(f"Cache usage: {stats['cache_size']}/{stats['cache_max_size']}")
+
+            >>> # Export to monitoring system
+            >>> prometheus_client.Gauge('cache_hit_rate').set(stats['cache_hit_rate'])
+        """
+        total = self.hit_count + self.miss_count
+        hit_rate = self.hit_count / total if total > 0 else 0.0
+
+        return {
+            "total_queries": total,
+            "cache_hits": self.hit_count,
+            "cache_misses": self.miss_count,
+            "cache_hit_rate": hit_rate,
+            "cache_size": len(self.cache),
+            "cache_max_size": self.max_size,
+        }
 
 
 class DuckDBQueryEngine:
@@ -90,8 +342,10 @@ class DuckDBQueryEngine:
             # Industry note: Similar to psycopg2.connect() for PostgreSQL
             self.db = duckdb.connect(db_path)
             self.data_source = data_source
-            self.cache = {}  # Simple cache (could upgrade to LRU cache)
-            self.cache_size = cache_size
+
+            # Initialize LRU cache (Phase 2.3)
+            # Industry note: Upgraded from simple dict to proper LRU cache
+            self.cache = QueryCache(max_size=cache_size, ttl=DUCKDB_CACHE_TTL)
 
             # Setup database configuration
             self._setup_database()
@@ -310,10 +564,10 @@ class DuckDBQueryEngine:
             self._setup_local_data()
 
     def execute(
-        self, sql: str, params: Optional[List[Any]] = None
+        self, sql: str, params: Optional[List[Any]] = None, use_cache: bool = True
     ) -> duckdb.DuckDBPyRelation:
         """
-        Execute raw SQL query.
+        Execute raw SQL query with optional caching.
 
         This is the low-level query interface, supporting full SQL syntax:
         - SELECT, JOIN, GROUP BY, window functions
@@ -323,6 +577,7 @@ class DuckDBQueryEngine:
         Args:
             sql: SQL query string
             params: Optional parameters for parameterized queries (防止 SQL injection)
+            use_cache: Whether to use query cache (default: True)
 
         Returns:
             DuckDBPyRelation: Query result (can convert to DataFrame, Arrow, etc.)
@@ -331,16 +586,49 @@ class DuckDBQueryEngine:
         - Similar to: psycopg2.cursor.execute(), SQLAlchemy.execute()
         - Security: Always use parameterized queries for user input
         - Performance: DuckDB auto-optimizes query plan (like PostgreSQL EXPLAIN)
+        - Caching: Phase 2.3 enhancement for repeated queries
+
+        Cache Behavior (Phase 2.3):
+        - Cache hit: Returns cached result in <1ms
+        - Cache miss: Executes query and caches result
+        - Cache bypass: Set use_cache=False for fresh data
 
         Example:
+            >>> # With cache (default)
             >>> result = engine.execute("SELECT * FROM traffic_data WHERE route = ?", [5])
-            >>> df = result.df()  # Convert to pandas DataFrame
+            >>> df = result.df()
+
+            >>> # Bypass cache (for write queries or fresh data)
+            >>> result = engine.execute("INSERT INTO ...", use_cache=False)
         """
         try:
+            # Phase 2.3: Check cache first (only for SELECT queries)
+            # Industry note: Only cache read queries, not writes (INSERT/UPDATE/DELETE)
+            is_select = sql.strip().upper().startswith("SELECT")
+
+            if use_cache and is_select:
+                # Try to get cached result
+                cached_df = self.cache.get(sql, params, self.data_source)
+                if cached_df is not None:
+                    # Cache hit! Return as DuckDBPyRelation for API consistency
+                    # Industry note: Need to convert DataFrame back to DuckDB relation
+                    return self.db.from_df(cached_df)
+
+            # Cache miss or cache bypassed - execute query
             if params:
-                return self.db.execute(sql, params)
+                result = self.db.execute(sql, params)
             else:
-                return self.db.execute(sql)
+                result = self.db.execute(sql)
+
+            # Phase 2.3: Cache the result (only for SELECT queries)
+            if use_cache and is_select:
+                result_df = result.df()
+                self.cache.set(sql, params, self.data_source, result_df)
+                # Return as relation (for API consistency)
+                return self.db.from_df(result_df)
+
+            return result
+
         except Exception as e:
             logger.error(f"❌ Query execution failed: {e}")
             logger.error(f"SQL: {sql}")
@@ -397,6 +685,54 @@ class DuckDBQueryEngine:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit (自動清理)"""
         self.close()
+
+    def cache_stats(self) -> Dict[str, Any]:
+        """
+        Get cache performance statistics.
+
+        Returns cache metrics including hit rate, size, and total queries.
+        Useful for monitoring and optimization.
+
+        Returns:
+            dict: Cache statistics (see QueryCache.get_stats() for details)
+
+        Industry Practice:
+        - Monitoring: Export to Prometheus, Grafana, DataDog
+        - SLO Target: >50% cache hit rate for dashboard workloads
+        - Alerting: Alert if hit rate drops significantly
+
+        Example:
+            >>> stats = engine.cache_stats()
+            >>> print(f"Cache hit rate: {stats['cache_hit_rate']:.1%}")
+            >>> print(f"Cache usage: {stats['cache_size']}/{stats['cache_max_size']}")
+            >>>
+            >>> # Check if cache is effective
+            >>> if stats['cache_hit_rate'] < 0.3:
+            >>>     print("⚠️  Low cache hit rate, consider increasing cache size")
+        """
+        return self.cache.get_stats()
+
+    def clear_cache(self):
+        """
+        Clear all cached query results.
+
+        Use Cases:
+        - After data refresh (new Parquet files uploaded)
+        - Memory pressure (free up RAM)
+        - Testing (ensure fresh queries)
+        - Manual cache invalidation
+
+        Industry Practice:
+        - Similar to: Redis FLUSHDB, browser clear cache
+        - When to use: After ETL runs, data updates, deployments
+
+        Example:
+            >>> # After processing new data
+            >>> processor.process_new_data()
+            >>> engine.clear_cache()  # Invalidate stale cached results
+            >>> print("Cache cleared, next queries will fetch fresh data")
+        """
+        self.cache.clear()
 
     # ========================================
     # Traffic-Specific Query Methods
