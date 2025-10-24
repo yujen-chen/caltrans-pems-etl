@@ -103,7 +103,9 @@ class QueryCache:
 
         logger.info(f"✅ QueryCache initialized (max_size={max_size}, ttl={ttl}s)")
 
-    def _generate_key(self, sql: str, params: Optional[List[Any]], data_source: str) -> str:
+    def _generate_key(
+        self, sql: str, params: Optional[List[Any]], data_source: str
+    ) -> str:
         """
         Generate unique cache key from query components.
 
@@ -134,7 +136,9 @@ class QueryCache:
         # Industry note: MD5 is deprecated for security, but fine for cache keys
         return hashlib.md5(content.encode()).hexdigest()
 
-    def get(self, sql: str, params: Optional[List[Any]], data_source: str) -> Optional[pd.DataFrame]:
+    def get(
+        self, sql: str, params: Optional[List[Any]], data_source: str
+    ) -> Optional[pd.DataFrame]:
         """
         Retrieve cached query result.
 
@@ -178,7 +182,9 @@ class QueryCache:
             del self.cache[key]
             del self.timestamps[key]
             self.miss_count += 1
-            logger.debug(f"Cache expired: key={key[:8]}... (age={age:.1f}s > ttl={self.ttl}s)")
+            logger.debug(
+                f"Cache expired: key={key[:8]}... (age={age:.1f}s > ttl={self.ttl}s)"
+            )
             return None
 
         # Cache hit! Move to end (mark as recently used)
@@ -189,7 +195,13 @@ class QueryCache:
         logger.debug(f"Cache hit: key={key[:8]}... (age={age:.1f}s)")
         return self.cache[key]
 
-    def set(self, sql: str, params: Optional[List[Any]], data_source: str, result: pd.DataFrame):
+    def set(
+        self,
+        sql: str,
+        params: Optional[List[Any]],
+        data_source: str,
+        result: pd.DataFrame,
+    ):
         """
         Store query result in cache.
 
@@ -217,10 +229,9 @@ class QueryCache:
         # Evict oldest item if cache is full
         # Industry note: Alternative policies: LFU (least frequently used), FIFO
         if len(self.cache) >= self.max_size and key not in self.cache:
-            # Remove first item (oldest, least recently used)
-            # OrderedDict maintains insertion order
-            oldest_key = next(iter(self.cache))
-            del self.cache[oldest_key]
+            # Remove oldest item (FIFO order in OrderedDict)
+            # Industry note: popitem(last=False) is Pythonic way to remove first item (LRU eviction)
+            oldest_key, _ = self.cache.popitem(last=False)
             del self.timestamps[oldest_key]
             logger.debug(f"Cache full, evicted: key={oldest_key[:8]}...")
 
@@ -228,7 +239,9 @@ class QueryCache:
         self.cache[key] = result
         self.timestamps[key] = time.time()
 
-        logger.debug(f"Cache set: key={key[:8]}... (size={len(self.cache)}/{self.max_size})")
+        logger.debug(
+            f"Cache set: key={key[:8]}... (size={len(self.cache)}/{self.max_size})"
+        )
 
     def clear(self):
         """
