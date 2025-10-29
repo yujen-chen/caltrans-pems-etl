@@ -416,4 +416,259 @@ class TestQueryCache:
         2. Call cache.clear()
         3. Verify the cache is empty and statistics are reset to zero
         """
-        pass
+        # === Arrange ===
+        test_cache = QueryCache()
+        test_sql = """
+                SELECT * FROM traffic_data
+                WHERE year = ?
+                AND route = ?
+                LIMIT 5
+        """
+
+        test_params_1 = [2021, 91]
+        test_params_2 = [2022, 5]
+        test_params_3 = [2023, 405]
+
+        test_data_source = "local"
+
+        import pandas as pd
+
+        test_result = pd.DataFrame(
+            {
+                "id": [1, 2, 3],
+                "year": [2021, 2022, 2023],
+                "route": [5, 405, 91],
+                "flow": [100, 200, 300],
+            }
+        )
+        # === Act ===
+        test_cache.set(
+            sql=test_sql,
+            params=test_params_1,
+            data_source=test_data_source,
+            result=test_result,
+        )
+        test_cache.set(
+            sql=test_sql,
+            params=test_params_2,
+            data_source=test_data_source,
+            result=test_result,
+        )
+        test_cache.set(
+            sql=test_sql,
+            params=test_params_3,
+            data_source=test_data_source,
+            result=test_result,
+        )
+
+        # === Assert ===
+        assert len(test_cache.cache) == 3, "Before clearing cache, items remains as 3"
+        test_cache.clear()
+        assert len(test_cache.cache) == 0, "After clearing cache, items is 0"
+        test_stats = test_cache.get_stats()
+        assert test_stats["cache_size"] == 0, "cache size should be 0"
+
+    def test_cache_stats(self):
+        """
+        1. Execute multiple queries (mix of hits & misses)
+        2. Verify that the hit_rate calculation is correct
+        3. Verify that total_queries = hits + misses
+        """
+        # === Arrange ===
+        test_cache = QueryCache()
+        test_sql = """
+                SELECT * FROM traffic_data
+                WHERE year = ?
+                AND route = ?
+                LIMIT 5
+        """
+
+        test_params_1 = [2021, 91]
+        test_params_2 = [2022, 5]
+        test_params_3 = [2023, 405]
+
+        test_data_source = "local"
+
+        import pandas as pd
+
+        test_result = pd.DataFrame(
+            {
+                "id": [1, 2, 3],
+                "year": [2021, 2022, 2023],
+                "route": [5, 405, 91],
+                "flow": [100, 200, 300],
+            }
+        )
+
+        # === Act ===
+        test_cache.set(
+            sql=test_sql,
+            params=test_params_1,
+            data_source=test_data_source,
+            result=test_result,
+        )
+        test_cache.set(
+            sql=test_sql,
+            params=test_params_2,
+            data_source=test_data_source,
+            result=test_result,
+        )
+
+        result_1 = test_cache.get(
+            sql=test_sql, params=test_params_1, data_source=test_data_source
+        )
+        result_2 = test_cache.get(
+            sql=test_sql, params=test_params_2, data_source=test_data_source
+        )
+        result_3 = test_cache.get(
+            sql=test_sql, params=test_params_3, data_source=test_data_source
+        )
+
+        # === Assert ===
+        test_stats = test_cache.get_stats()
+        assert (
+            test_stats["total_queries"]
+            == test_stats["cache_hits"] + test_stats["cache_misses"]
+        ), "total queries should be equal to cache hits plus misses"
+        assert round(test_stats["cache_hit_rate"], 2) == round(
+            (test_stats["cache_hits"] / test_stats["total_queries"]), 2
+        ), "The cache_hit_rate should equal to cache_hits/total_queries"
+
+    def test_cache_key_uniqueness(self):
+        """
+        Test different query combinations to generate unique cache keys
+        Test Strategy:
+        1. Use the same SQL but different parameters
+        2. Use different SQL but the same parameters
+        3. Use different data sources
+        4. Verify that each combination generates a different cache key
+        """
+        # === Arrange ===
+        test_cache = QueryCache()
+        test_sql_1 = """
+                SELECT * FROM traffic_data
+                WHERE year = ?
+                AND route = ?
+                LIMIT 5
+        """
+        test_sql_2 = """
+                SELECT * FROM traffic_data
+                WHERE year = ?
+                AND route = ?
+                LIMIT 10
+        """
+
+        test_params_1 = [2021, 91]
+        test_params_2 = [2022, 5]
+
+        test_data_source_1 = "local"
+        test_data_source_2 = "r2"
+
+        import pandas as pd
+
+        test_result = pd.DataFrame(
+            {
+                "id": [1, 2, 3],
+                "year": [2021, 2022, 2023],
+                "route": [5, 405, 91],
+                "flow": [100, 200, 300],
+            }
+        )
+
+        # === Act and Assert ===
+        test_cache.set(
+            sql=test_sql_1,
+            params=test_params_1,
+            data_source=test_data_source_1,
+            result=test_result,
+        )
+        test_cache.set(
+            sql=test_sql_1,
+            params=test_params_2,
+            data_source=test_data_source_1,
+            result=test_result,
+        )
+
+        keys_1 = list(test_cache.cache.keys())
+
+        assert (
+            keys_1[0] != keys_1[-1]
+        ), "Same SQL but different parameters should generate different keys"
+
+        test_cache.clear()
+
+        test_cache.set(
+            sql=test_sql_2,
+            params=test_params_1,
+            data_source=test_data_source_1,
+            result=test_result,
+        )
+        test_cache.set(
+            sql=test_sql_2,
+            params=test_params_2,
+            data_source=test_data_source_1,
+            result=test_result,
+        )
+
+        keys_2 = list(test_cache.cache.keys())
+
+        assert (
+            keys_2[0] != keys_2[-1]
+        ), "Different SQL but same parameters should generate different keys"
+
+        test_cache.clear()
+
+        test_cache.set(
+            sql=test_sql_1,
+            params=test_params_1,
+            data_source=test_data_source_1,
+            result=test_result,
+        )
+        test_cache.set(
+            sql=test_sql_1,
+            params=test_params_1,
+            data_source=test_data_source_2,
+            result=test_result,
+        )
+
+        keys_3 = list(test_cache.cache.keys())
+
+        assert (
+            keys_3[0] != keys_3[-1]
+        ), "Same SQL and parameters but different data source should generate different keys"
+
+    def test_cache_with_none_params(self):
+        """
+        1. Query with params=None for storage
+        2. Retrieval should be successful
+        """
+        # === Arrange ===
+        test_cache = QueryCache()
+        test_sql = """
+                SELECT * FROM traffic_data
+                WHERE year = ?
+                AND route = ?
+                LIMIT 5
+        """
+
+        test_data_source = "local"
+
+        import pandas as pd
+
+        test_result = pd.DataFrame(
+            {
+                "id": [1, 2, 3],
+                "year": [2021, 2022, 2023],
+                "route": [5, 405, 91],
+                "flow": [100, 200, 300],
+            }
+        )
+
+        # === Act ===
+        test_cache.set(
+            sql=test_sql, params=None, data_source=test_data_source, result=test_result
+        )
+
+        result = test_cache.get(sql=test_sql, params=None, data_source=test_data_source)
+
+        assert result is not None, "Retrieval should be successful"
